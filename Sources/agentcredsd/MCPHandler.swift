@@ -24,7 +24,7 @@ final class MCPHandler {
             return reply(id: id, result: [
                 "protocolVersion": "2024-11-05",
                 "capabilities": ["tools": [String: Any]()],
-                "serverInfo": ["name": "agent-creds", "version": "1.0.1"],
+                "serverInfo": ["name": "agent-creds", "version": "1.0.2"],
             ])
         case "notifications/initialized", "notifications/cancelled":
             return nil

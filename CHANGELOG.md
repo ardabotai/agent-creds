@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+### Fixed
+- `install.sh` shipped inside the release archive tried to compile source that
+  is not in the archive. It now uses the signed binaries packaged beside it, and
+  only builds when run from a git checkout — where it also reports a missing
+  Swift toolchain instead of failing obscurely.
+
 ## 1.0.1
 
 ### Fixed

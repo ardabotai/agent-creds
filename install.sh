@@ -8,14 +8,28 @@ LABEL="ai.ardabot.agentcreds.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Building release binaries"
-cd "$SOURCE_DIR"
-swift build -c release
+# A downloaded release archive ships the binaries next to this script; a git
+# checkout does not, and builds them. Without this the archive's installer would
+# try to compile source that is not there.
+if [ -x "$SOURCE_DIR/agentcreds" ] && [ -x "$SOURCE_DIR/agentcredsd" ]; then
+  echo "==> Using the signed binaries in this archive"
+  BUILT_DIR="$SOURCE_DIR"
+else
+  echo "==> Building release binaries"
+  cd "$SOURCE_DIR"
+  if ! command -v swift >/dev/null 2>&1; then
+    echo "Swift toolchain not found. Install Xcode Command Line Tools:" >&2
+    echo "    xcode-select --install" >&2
+    exit 1
+  fi
+  swift build -c release
+  BUILT_DIR="$SOURCE_DIR/.build/release"
+fi
 
 echo "==> Installing to $PREFIX"
 mkdir -p "$PREFIX"
-install -m 755 .build/release/agentcreds "$PREFIX/agentcreds"
-install -m 755 .build/release/agentcredsd "$PREFIX/agentcredsd"
+install -m 755 "$BUILT_DIR/agentcreds" "$PREFIX/agentcreds"
+install -m 755 "$BUILT_DIR/agentcredsd" "$PREFIX/agentcredsd"
 
 echo "==> Registering login agent ($LABEL)"
 mkdir -p "$HOME/Library/LaunchAgents"
