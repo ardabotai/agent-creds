@@ -159,6 +159,30 @@ agentcreds audit [--limit N]                # approval / release history
 agentcreds run --with <name>[:ENV_VAR] … -- <cmd> [args…]
 ```
 
+## Passkey-protected vaults
+
+By default the vault key lives in the Keychain and the Touch ID prompt is
+*procedural* — the app asks macOS whether you are present, then decides on its
+own to release. Nothing binds your approval to the secret.
+
+Enrolling a passkey changes that:
+
+```sh
+agentcreds passkey enroll     # re-wraps the vault, then removes the Keychain key
+agentcreds passkey status
+```
+
+The passkey's WebAuthn PRF output derives the key that unwraps your secrets, so
+the assertion *is* the key release. Without your approval the key does not exist
+in the process — an unapproved release is impossible rather than refused.
+Enrollment re-wraps every DEK before switching and only then drops the Keychain
+copy, so a failure leaves the vault exactly as it was.
+
+**Requires the signed build.** Passkeys need the `associated-domains`
+entitlement, which cannot be attached to a bare executable, so a Homebrew
+source build stays on the Keychain key. Use the signed archive from
+[Releases](https://github.com/ardabotai/agent-creds/releases).
+
 ## Crypto and storage
 
 Envelope encryption: each secret gets its own DEK (ChaCha20-Poly1305 via
