@@ -13,7 +13,7 @@ public enum VaultError: Error {
 /// CloudKit private database for iPhone sync.
 public final class VaultStore {
     private let url: URL
-    private let kek: SymmetricKey
+    private let kekProvider: KEKProviding
     private let lock = NSLock()
 
     /// The one way both the daemon and the CLI open the user's vault, so the
@@ -22,9 +22,13 @@ public final class VaultStore {
         try VaultStore(kek: KeychainKEKProvider().loadOrCreate())
     }
 
-    public init(url: URL = IPCPaths.vaultURL, kek: SymmetricKey) throws {
+    public convenience init(url: URL = IPCPaths.vaultURL, kek: SymmetricKey) throws {
+        try self.init(url: url, kekProvider: StaticKEKProvider(kek))
+    }
+
+    public init(url: URL = IPCPaths.vaultURL, kekProvider: KEKProviding) throws {
         self.url = url
-        self.kek = kek
+        self.kekProvider = kekProvider
         IPCPaths.ensureDirectory()
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
@@ -54,6 +58,7 @@ public final class VaultStore {
     public func save(name: String, kind: SecretKind, value: Data, policy: SecretPolicy) throws -> SecretRecord {
         lock.lock(); defer { lock.unlock() }
         var records = try loadRecords()
+        let kek = try kekProvider.kek(reason: "Save “\(name)” to your vault")
         let (ciphertext, wrappedDEK) = try Envelope.seal(value, kek: kek)
         records.removeAll { $0.name == name }
         let record = SecretRecord(name: name, kind: kind, ciphertext: ciphertext,
@@ -79,7 +84,23 @@ public final class VaultStore {
     /// approval ceremony — the result feeds a minter or the egress proxy,
     /// never an agent-facing response.
     public func revealValue(of record: SecretRecord) throws -> Data {
-        try Envelope.open(ciphertext: record.ciphertext, wrappedDEK: record.wrappedDEK, kek: kek)
+        let kek = try kekProvider.kek(reason: "Release “\(record.name)”")
+        return try Envelope.open(ciphertext: record.ciphertext, wrappedDEK: record.wrappedDEK, kek: kek)
+    }
+
+    /// Re-wraps every DEK under a new KEK. Switching KEK sources (Keychain to
+    /// passkey, or rotating a passkey) only touches the wrapped DEKs — secret
+    /// values are never re-encrypted, which is the point of the envelope.
+    public func rewrapDEKs(to newKEK: SymmetricKey, reason: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        let oldKEK = try kekProvider.kek(reason: reason)
+        var records = try loadRecords()
+        for index in records.indices {
+            let dekData = try ChaChaPoly.open(
+                ChaChaPoly.SealedBox(combined: records[index].wrappedDEK), using: oldKEK)
+            records[index].wrappedDEK = try ChaChaPoly.seal(dekData, using: newKEK).combined
+        }
+        try persist(records)
     }
 
     public func delete(name: String) throws {

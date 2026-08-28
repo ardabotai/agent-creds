@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import AgentCredsCore
 
@@ -72,12 +73,42 @@ final class Connection {
         }
     }
 
+    /// One-shot commands that need the daemon's UI — a passkey sheet cannot be
+    /// presented from a terminal process.
+    private func respondToControl(_ command: String) {
+        var payload: [String: Any]
+        switch command {
+        case "passkey-enroll":
+            guard let delegate = NSApp.delegate as? AppDelegate else {
+                payload = ["ok": false, "error": "daemon not ready"]
+                break
+            }
+            switch AppDelegate.runPasskeyEnrollment(ceremony: delegate.passkeyCeremony) {
+            case .success(let outcome):
+                payload = ["ok": true, "relyingParty": outcome.relyingParty,
+                           "secretsRewrapped": outcome.secretsRewrapped]
+            case .failure(let error):
+                payload = ["ok": false, "error": "\(error)"]
+            }
+        default:
+            payload = ["ok": false, "error": "unknown control command: \(command)"]
+        }
+        if var data = try? JSONSerialization.data(withJSONObject: payload) {
+            data.append(UInt8(ascii: "\n"))
+            fileHandle.write(data)
+        }
+        try? fileHandle.close()
+    }
+
     private func handleLine(_ line: Data) {
         if hello == nil {
             if let h = try? JSONDecoder().decode(ClientHello.self, from: line), h.agentcreds == "hello" {
                 // TODO pairing: unknown client -> approval prompt + issue token;
                 // known client -> verify token. For now, accept and record.
                 hello = h
+                if let command = h.control {
+                    respondToControl(command)
+                }
                 return
             }
         }

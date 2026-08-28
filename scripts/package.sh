@@ -44,6 +44,38 @@ cp .build/apple/Products/Release/agentcreds "$STAGE/"
 cp .build/apple/Products/Release/agentcredsd "$STAGE/"
 cp install.sh uninstall.sh README.md LICENSE "$STAGE/"
 
+# The daemon ships as a .app bundle so it can carry the associated-domains
+# entitlement that WebAuthn passkeys require. A bare executable cannot hold
+# entitlements, which is why passkey mode needs this signed build rather than a
+# local `swift build`.
+APP="$STAGE/agent-creds.app"
+echo "==> Assembling $APP"
+mkdir -p "$APP/Contents/MacOS"
+cp "$STAGE/agentcredsd" "$APP/Contents/MacOS/agentcredsd"
+cat > "$APP/Contents/Info.plist" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>agentcredsd</string>
+    <key>CFBundleIdentifier</key><string>ai.ardabot.agentcreds</string>
+    <key>CFBundleName</key><string>agent-creds</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION#v}</string>
+    <key>CFBundleVersion</key><string>${VERSION#v}</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <!-- Menubar agent: no Dock icon, no main window. -->
+    <key>LSUIElement</key><true/>
+</dict>
+</plist>
+PLIST_EOF
+
+echo "==> Signing the app bundle with entitlements"
+codesign --force --timestamp --options runtime \
+         --entitlements "$(dirname "$0")/agentcredsd.entitlements" \
+         --sign "$SIGN_ID" "$APP"
+codesign --verify --strict --verbose=1 "$APP"
+
 echo "==> Signing with hardened runtime"
 for bin in agentcreds agentcredsd; do
   codesign --force --timestamp --options runtime \
@@ -71,6 +103,22 @@ if [ -n "${KEYCHAIN_PROFILE:-}" ]; then
   done
 else
   echo "==> KEYCHAIN_PROFILE not set — skipping notarization (binaries are signed only)"
+fi
+
+# A .dmg can carry a stapled ticket, which bare executables in a zip cannot.
+# That is what lets a first run succeed with no network.
+if [ -n "${KEYCHAIN_PROFILE:-}" ]; then
+  DMG="$DIST/agent-creds-$VERSION-macos-universal.dmg"
+  echo "==> Building stapleable $DMG"
+  rm -f "$DMG"
+  hdiutil create -quiet -srcfolder "$STAGE" -volname "agent-creds $VERSION" \
+                 -fs HFS+ -format UDZO "$DMG"
+  codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+  echo "==> Notarizing the disk image"
+  xcrun notarytool submit "$DMG" --keychain-profile "$KEYCHAIN_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
+  shasum -a 256 "$DMG" | tee "$DMG.sha256"
 fi
 
 shasum -a 256 "$ARCHIVE" | tee "$ARCHIVE.sha256"

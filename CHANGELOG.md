@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added — Phase 3: passkey-derived vault key
+- The vault KEK can now be derived from a WebAuthn passkey's PRF output rather
+  than stored in the Keychain. The assertion *is* the key release: without a
+  Touch ID approval the key does not exist in the process, so an unapproved
+  release is impossible rather than merely refused.
+- `agentcreds passkey status|enroll`, and a menubar item, move an existing vault
+  across. Enrollment re-wraps every DEK before switching and only then removes
+  the Keychain copy, so a failure leaves the vault exactly as it was.
+- The daemon ships as a signed `.app` bundle carrying the
+  `associated-domains` entitlement that passkeys require.
+
+Passkey mode needs the signed build: entitlements cannot be attached to a bare
+executable, so a local `swift build` stays on the Keychain KEK.
+
 ## 1.0.2
 
 ### Fixed

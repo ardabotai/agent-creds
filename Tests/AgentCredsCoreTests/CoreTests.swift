@@ -274,3 +274,74 @@ final class UnixSocketTests: XCTestCase {
         close(client)
     }
 }
+
+final class PasskeyKEKTests: XCTestCase {
+    func testDerivedKEKIsDeterministicAndDomainSeparated() {
+        let prf = SymmetricKey(size: .bits256)
+        let a = PasskeyKEK.deriveKEK(prfOutput: prf, relyingParty: "agentcreds.ardabot.ai")
+        let b = PasskeyKEK.deriveKEK(prfOutput: prf, relyingParty: "agentcreds.ardabot.ai")
+        XCTAssertEqual(a.withUnsafeBytes { Data($0) }, b.withUnsafeBytes { Data($0) })
+
+        // The same authenticator output used for a different relying party must
+        // not yield the same vault key.
+        let other = PasskeyKEK.deriveKEK(prfOutput: prf, relyingParty: "example.com")
+        XCTAssertNotEqual(a.withUnsafeBytes { Data($0) }, other.withUnsafeBytes { Data($0) })
+    }
+
+    func testKEKCheckDetectsTheWrongPasskey() {
+        let enrolled = PasskeyKEK.deriveKEK(prfOutput: SymmetricKey(size: .bits256),
+                                            relyingParty: "agentcreds.ardabot.ai")
+        let different = PasskeyKEK.deriveKEK(prfOutput: SymmetricKey(size: .bits256),
+                                             relyingParty: "agentcreds.ardabot.ai")
+        XCTAssertEqual(PasskeyKEK.check(for: enrolled), PasskeyKEK.check(for: enrolled))
+        XCTAssertNotEqual(PasskeyKEK.check(for: enrolled), PasskeyKEK.check(for: different))
+        // The check must not be the key itself.
+        XCTAssertNotEqual(PasskeyKEK.check(for: enrolled), enrolled.withUnsafeBytes { Data($0) })
+    }
+
+    func testSaltsAreUnique() {
+        XCTAssertEqual(PasskeyKEK.newSalt().count, 32)
+        XCTAssertNotEqual(PasskeyKEK.newSalt(), PasskeyKEK.newSalt())
+    }
+
+    /// Switching KEK source must preserve every secret. This is the step that
+    /// would destroy a vault if it were wrong.
+    func testRewrapPreservesEverySecretUnderTheNewKEK() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("vault.json")
+        let oldKEK = SymmetricKey(size: .bits256)
+        let vault = try VaultStore(url: url, kek: oldKEK)
+        try vault.save(name: "github/token", kind: .opaque, value: Data("ghp_one".utf8),
+                       policy: SecretPolicy(allowedHosts: ["api.github.com"]))
+        try vault.save(name: "stripe/key", kind: .opaque, value: Data("sk_two".utf8),
+                       policy: SecretPolicy(allowedHosts: ["api.stripe.com"]))
+
+        let newKEK = SymmetricKey(size: .bits256)
+        try vault.rewrapDEKs(to: newKEK, reason: "test")
+
+        // Readable under the new KEK...
+        let reopened = try VaultStore(url: url, kek: newKEK)
+        let github = try XCTUnwrap(try reopened.record(named: "github/token"))
+        XCTAssertEqual(try reopened.revealValue(of: github), Data("ghp_one".utf8))
+        let stripe = try XCTUnwrap(try reopened.record(named: "stripe/key"))
+        XCTAssertEqual(try reopened.revealValue(of: stripe), Data("sk_two".utf8))
+        // ...and no longer under the old one.
+        let stale = try VaultStore(url: url, kek: oldKEK)
+        XCTAssertThrowsError(try stale.revealValue(of: try XCTUnwrap(stale.record(named: "github/token"))))
+        // Policy and metadata survive the re-wrap.
+        XCTAssertEqual(github.policy.allowedHosts, ["api.github.com"])
+    }
+
+    func testKEKConfigRoundTrips() throws {
+        let config = KEKConfig(source: .passkey, relyingParty: "agentcreds.ardabot.ai",
+                               credentialID: Data([1, 2, 3]), salt: PasskeyKEK.newSalt(),
+                               kekCheck: Data([9, 9]))
+        let data = try JSONEncoder().encode(config)
+        let back = try JSONDecoder().decode(KEKConfig.self, from: data)
+        XCTAssertEqual(back.source, .passkey)
+        XCTAssertEqual(back.relyingParty, "agentcreds.ardabot.ai")
+        XCTAssertEqual(back.credentialID, Data([1, 2, 3]))
+        // A vault with no config file defaults to the Keychain, not to passkey.
+        XCTAssertEqual(KEKConfig().source, .keychain)
+    }
+}

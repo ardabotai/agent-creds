@@ -27,11 +27,16 @@ public struct ClientHello: Codable {
     public var agentcreds: String
     public var client: String
     public var token: String?
+    /// When set, this connection performs one control command and closes
+    /// instead of speaking MCP. Used by CLI commands that need the daemon's UI
+    /// (a passkey prompt has to come from the app, not a terminal).
+    public var control: String?
 
-    public init(client: String, token: String? = nil) {
+    public init(client: String, token: String? = nil, control: String? = nil) {
         self.agentcreds = "hello"
         self.client = client
         self.token = token
+        self.control = control
     }
 }
 

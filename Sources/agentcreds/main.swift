@@ -13,6 +13,7 @@ func usage() -> Never {
       agentcreds setup [--agent <id>]  register the MCP server with your agent host(s)
                                        auto-detects claude-code, codex, opencode, cursor
       agentcreds skill                 print the agent guidance (pipe into AGENTS.md)
+      agentcreds passkey status|enroll protect the vault with a passkey (WebAuthn PRF)
       agentcreds doctor                check that everything is wired up
       agentcreds mcp --client <name>   MCP stdio shim (register in your agent host)
       agentcreds add <name> --host <api.host.com> [--host …] [--kind opaque|oauthRefresh|awsRoot|githubApp]
@@ -246,6 +247,51 @@ do {
             if let username { identity.username = username }
             try identity.save()
             print("Identity updated.")
+        }
+
+    case "passkey":
+        let config = KEKConfig.load()
+        switch rest.first {
+        case "status", nil:
+            print("  KEK source:    \(config.source.rawValue)")
+            if config.source == .passkey {
+                print("  relying party: \(config.relyingParty ?? "?")")
+                print("  Every release derives the key from a passkey assertion — there is no")
+                print("  stored key to fall back on.")
+            } else {
+                print("  The key is stored in the Keychain and the biometric gate is procedural.")
+                print("  Run `agentcreds passkey enroll` to make approval cryptographic.")
+            }
+        case "enroll":
+            guard config.source != .passkey else {
+                print("Already protected by a passkey.")
+                exit(0)
+            }
+            // The sheet must come from the daemon; a terminal cannot present it.
+            guard let fd = try? UnixSocket.connect(to: IPCPaths.socketPath) else {
+                print("The daemon is not running. Start it first: brew services start agent-creds")
+                exit(1)
+            }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            var hello = try JSONEncoder().encode(
+                ClientHello(client: "agentcreds-cli", control: "passkey-enroll"))
+            hello.append(UInt8(ascii: "\n"))
+            handle.write(hello)
+            print("Approve the passkey prompts (you will see two: create, then use)…")
+            let reply = handle.readDataToEndOfFile()
+            if let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any],
+               object["ok"] as? Bool == true {
+                print("  ✓ Vault re-wrapped under a passkey-derived key (\(object["secretsRewrapped"] as? Int ?? 0) secret(s)).")
+                print("  ✓ The Keychain copy of the key has been removed.")
+                print("  Restart the daemon to pick it up: brew services restart agent-creds")
+            } else {
+                let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+                print("  Enrollment failed: \(object?["error"] as? String ?? "no response from daemon")")
+                exit(1)
+            }
+        default:
+            print("Usage: agentcreds passkey [status|enroll]")
+            exit(64)
         }
 
     case "skill":
