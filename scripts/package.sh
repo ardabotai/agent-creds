@@ -17,15 +17,21 @@ VERSION="${VERSION:-$(git describe --tags --always)}"
 DIST="dist"
 STAGE="$DIST/agent-creds-$VERSION"
 
-# Auto-detect the Developer ID unless one was named explicitly.
+# Auto-detect the Developer ID unless one was named explicitly. Prefer the
+# company certificate: an account that predates an organization rename still
+# holds a personal-name cert, and that name is what Gatekeeper shows users.
+ORG_NAME="${ORG_NAME:-ArdaBot, Inc.}"
 if [ -z "${SIGN_ID:-}" ]; then
-  SIGN_ID=$(security find-identity -v -p codesigning \
-            | grep "Developer ID Application" \
-            | head -1 | sed -E 's/.*"(.*)"/\1/')
+  identities=$(security find-identity -v -p codesigning | grep "Developer ID Application" || true)
+  SIGN_ID=$(echo "$identities" | grep -F "$ORG_NAME" | head -1 | sed -E 's/.*"(.*)"/\1/')
+  if [ -z "$SIGN_ID" ]; then
+    SIGN_ID=$(echo "$identities" | head -1 | sed -E 's/.*"(.*)"/\1/')
+    [ -n "$SIGN_ID" ] && echo "WARNING: no '$ORG_NAME' certificate; falling back to: $SIGN_ID" >&2
+  fi
 fi
 if [ -z "$SIGN_ID" ]; then
   echo "No Developer ID Application certificate found." >&2
-  echo "Create one in Xcode → Settings → Accounts → Manage Certificates → +." >&2
+  echo "Create one in Xcode → Settings → Accounts → <team> → Manage Certificates → +." >&2
   exit 1
 fi
 echo "==> Signing identity: $SIGN_ID"
