@@ -6,7 +6,7 @@
          /.well-known/apple-app-site-association naming this app. -->
     <key>com.apple.developer.associated-domains</key>
     <array>
-        <string>webcredentials:agentcreds.ardabot.ai</string>
+        <string>webcredentials:agentcreds.vercel.app</string>
     </array>
 </dict>
 </plist>

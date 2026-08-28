@@ -183,6 +183,10 @@ entitlement, which cannot be attached to a bare executable, so a Homebrew
 source build stays on the Keychain key. Use the signed archive from
 [Releases](https://github.com/ardabotai/agent-creds/releases).
 
+The relying party is `agentcreds.vercel.app`, which serves the association file
+that authorizes this app. Point it elsewhere with `AGENTCREDS_RELYING_PARTY`
+(the entitlement has to match).
+
 ## Crypto and storage
 
 Envelope encryption: each secret gets its own DEK (ChaCha20-Poly1305 via
