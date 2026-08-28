@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
-LABEL="com.ardabot.agentcreds.daemon"
+LABEL="ai.ardabot.agentcreds.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

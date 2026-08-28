@@ -48,12 +48,19 @@ a new code identity on every build, which invalidates the Keychain ACL on the
 master key and makes macOS re-prompt on every update.
 
 ```sh
-SIGN_ID="Developer ID Application: ArdaBot, Inc. (TEAMID)" \
-KEYCHAIN_PROFILE=notary \
-  ./scripts/package.sh
+KEYCHAIN_PROFILE=notary ./scripts/package.sh
 ```
 
-Create the notary profile once with `xcrun notarytool store-credentials`.
+The Developer ID identity is auto-detected; set `SIGN_ID` to override. Create
+the notary profile once:
+
+```sh
+xcrun notarytool store-credentials notary \
+  --apple-id <your-apple-id> --team-id 3CQT7X643L --password <app-specific-password>
+```
+
+Without `KEYCHAIN_PROFILE` the script signs but skips notarization, which is
+fine for local testing and not fine for anything users download.
 
 ## Pull requests
 

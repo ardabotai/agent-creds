@@ -13,3 +13,6 @@ DerivedData/
 *.jsonl
 vault.json
 kek.devonly
+
+# Release artifacts
+dist/

@@ -30,7 +30,7 @@ will take appropriate corrective action in response to any behavior they deem
 inappropriate, threatening, offensive, or harmful.
 
 Report abusive, harassing, or otherwise unacceptable behavior to the maintainers
-at ArdaBot, Inc.: **<REPLACE WITH A CONTACT EMAIL BEFORE PUBLISHING>**. All complaints will be
+at ArdaBot, Inc.: **contact@ardabot.ai**. All complaints will be
 reviewed and investigated promptly and fairly. Maintainers must respect the
 privacy and security of the reporter.
 

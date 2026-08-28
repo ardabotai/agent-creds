@@ -11,6 +11,9 @@ Use GitHub's private vulnerability reporting: go to the **Security** tab →
 **Report a vulnerability**. That opens a private channel visible only to
 maintainers.
 
+If you cannot use GitHub's reporting flow, email **contact@ardabot.ai** with
+"SECURITY" in the subject.
+
 Please include the version or commit, your macOS version, what an attacker can
 achieve, and the steps to reproduce it. A proof of concept helps a lot.
 

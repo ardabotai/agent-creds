@@ -17,7 +17,18 @@ VERSION="${VERSION:-$(git describe --tags --always)}"
 DIST="dist"
 STAGE="$DIST/agent-creds-$VERSION"
 
-: "${SIGN_ID:?set SIGN_ID to your Developer ID Application identity}"
+# Auto-detect the Developer ID unless one was named explicitly.
+if [ -z "${SIGN_ID:-}" ]; then
+  SIGN_ID=$(security find-identity -v -p codesigning \
+            | grep "Developer ID Application" \
+            | head -1 | sed -E 's/.*"(.*)"/\1/')
+fi
+if [ -z "$SIGN_ID" ]; then
+  echo "No Developer ID Application certificate found." >&2
+  echo "Create one in Xcode → Settings → Accounts → Manage Certificates → +." >&2
+  exit 1
+fi
+echo "==> Signing identity: $SIGN_ID"
 
 echo "==> Building universal binaries ($VERSION)"
 swift build -c release --arch arm64 --arch x86_64

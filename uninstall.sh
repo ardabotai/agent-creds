@@ -4,11 +4,15 @@
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
-LABEL="com.ardabot.agentcreds.daemon"
+LABEL="ai.ardabot.agentcreds.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-rm -f "$PLIST" "$PREFIX/agentcreds" "$PREFIX/agentcredsd"
+# Include labels used before the rename so older installs clean up fully.
+for label in "$LABEL" com.ardabot.agentcreds.daemon dev.agentcreds.daemon; do
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$label.plist"
+done
+rm -f "$PREFIX/agentcreds" "$PREFIX/agentcredsd"
 
 echo "Removed binaries and login agent."
 echo "Your vault is still at ~/Library/Application Support/agent-creds"

@@ -33,10 +33,11 @@ public enum Envelope {
 /// keychain-access-groups entitlement, so the unsigned dev build uses a
 /// local-only item for now.
 public struct KeychainKEKProvider {
-    private let service = "com.ardabot.agentcreds.master"
-    /// Pre-1.0 service name. Read once, migrated, then removed — an installed
-    /// vault must survive the rename, since losing the KEK loses every secret.
-    private let legacyService = "dev.agentcreds.master"
+    private let service = "ai.ardabot.agentcreds.master"
+    /// Earlier service names, newest first. Read once, migrated, then removed —
+    /// an installed vault must survive a rename, since losing the KEK loses
+    /// every secret in it.
+    private let legacyServices = ["com.ardabot.agentcreds.master", "dev.agentcreds.master"]
     private let account = "kek"
 
     public init() {}
@@ -81,15 +82,24 @@ public struct KeychainKEKProvider {
     /// silently strand an existing vault. Returns nil when there is nothing to
     /// migrate.
     private func migrateLegacyKEK() throws -> SymmetricKey? {
-        let legacyQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: legacyService,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-        ]
-        var legacyItem: CFTypeRef?
-        let status = SecItemCopyMatching(legacyQuery as CFDictionary, &legacyItem)
-        guard status == errSecSuccess, let data = legacyItem as? Data else { return nil }
+        var found: Data?
+        var sourceService: String?
+        for legacy in legacyServices {
+            let legacyQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: legacy,
+                kSecAttrAccount as String: account,
+                kSecReturnData as String: true,
+            ]
+            var legacyItem: CFTypeRef?
+            if SecItemCopyMatching(legacyQuery as CFDictionary, &legacyItem) == errSecSuccess,
+               let data = legacyItem as? Data {
+                found = data
+                sourceService = legacy
+                break
+            }
+        }
+        guard let data = found, let sourceService else { return nil }
 
         let add: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -104,7 +114,7 @@ public struct KeychainKEKProvider {
         // Only drop the old copy once the new one is safely stored.
         SecItemDelete([
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: legacyService,
+            kSecAttrService as String: sourceService,
             kSecAttrAccount as String: account,
         ] as CFDictionary)
         return SymmetricKey(data: data)
