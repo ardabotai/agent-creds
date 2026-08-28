@@ -40,6 +40,21 @@ form. Concretely:
 - Anything injected into a request must be added to the scrub list, in every
   form it takes on the wire
 
+## Releases
+
+`scripts/package.sh` builds universal binaries, signs them with a Developer ID,
+and notarizes the tarball. Signing is not cosmetic here: an unsigned binary gets
+a new code identity on every build, which invalidates the Keychain ACL on the
+master key and makes macOS re-prompt on every update.
+
+```sh
+SIGN_ID="Developer ID Application: ArdaBot, Inc. (TEAMID)" \
+KEYCHAIN_PROFILE=notary \
+  ./scripts/package.sh
+```
+
+Create the notary profile once with `xcrun notarytool store-credentials`.
+
 ## Pull requests
 
 - Add tests for behavior changes. Security-relevant logic — host matching, the

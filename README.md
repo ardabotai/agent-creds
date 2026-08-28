@@ -34,24 +34,58 @@ nothing more:
 
 ## Install
 
-Requires macOS 14+ and a Swift 5.9+ toolchain (Xcode 15+).
+**Paste this to your agent** and it will do the whole setup:
+
+```text
+Install agent-creds on my Mac so you can use my credentials without ever seeing them.
+
+1. brew install ardabotai/tap/agent-creds
+   (no Homebrew? git clone https://github.com/ardabotai/agent-creds.git && cd agent-creds && ./install.sh)
+2. brew services start agent-creds
+3. agentcreds setup
+4. agentcreds doctor — show me the output and fix anything it flags.
+
+Then tell me which credentials I should add, and from now on use agent-creds
+whenever you need one instead of asking me to paste it into the chat.
+```
+
+`agentcreds setup` detects your agent hosts, registers the MCP server with each,
+and installs the skill that teaches them when to reach for the vault.
+`agentcreds doctor` verifies every piece and tells you how to fix what's missing.
+
+<details>
+<summary>Doing it yourself</summary>
+
+Requires macOS 14+ and a Swift 5.9+ toolchain (Xcode 15+ or Command Line Tools).
 
 ```sh
 git clone https://github.com/ardabotai/agent-creds.git
 cd agent-creds
-./install.sh
-```
-
-Builds release binaries into `~/.local/bin`, registers the daemon as a login
-agent, and starts it — the 🔑 menubar icon appears. Then:
-
-```sh
+./install.sh          # build, install to ~/.local/bin, register the login agent
+agentcreds setup      # register MCP + install the agent skill
 agentcreds identity --email you@example.com
 agentcreds add github/token --host api.github.com
-claude mcp add agentcreds -- ~/.local/bin/agentcreds mcp --client claude-code
+agentcreds doctor
 ```
 
 `./uninstall.sh` removes the binaries and login agent, leaving the vault intact.
+</details>
+
+## Works with
+
+`agentcreds setup` auto-detects and configures whichever of these you have:
+
+| Agent | MCP registration | Behavior guidance |
+|---|---|---|
+| Claude Code | `claude mcp add -s user` | Skill, installed automatically |
+| Codex | `~/.codex/config.toml` | `agentcreds skill >> ~/.codex/AGENTS.md` |
+| opencode | `~/.config/opencode/opencode.json` | `agentcreds skill >> AGENTS.md` |
+| Cursor | `~/.cursor/mcp.json` | Tool descriptions |
+
+Any other MCP-capable agent works too — register
+`agentcreds mcp --client <name>` as a stdio server. Run `agentcreds skill` to
+print the guidance in Markdown and drop it wherever your host reads
+instructions.
 
 ## What an agent can do
 

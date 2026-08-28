@@ -14,6 +14,15 @@ ever seeing them. Maintained by ArdaBot, Inc.
 - Browser fill over the Chrome DevTools Protocol for Playwright / agent-browser
 - Account signup with generated passwords the agent never sees
 
+### Setup
+- `agentcreds setup` auto-detects Claude Code, Codex, opencode, and Cursor and
+  registers the MCP server with each
+- Agent skill teaching hosts when to reach for the vault, and never to ask for a
+  secret in chat; `agentcreds skill` prints it for AGENTS.md-based hosts
+- `agentcreds doctor` verifies daemon, proxy, registration, identity, and vault
+- The MCP shim starts the daemon on demand, so the first agent call works on a
+  fresh install
+
 ### Security
 - Touch ID ceremony on the daemon's own UI for every release — never through
   the agent's conversation

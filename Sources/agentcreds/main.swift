@@ -10,6 +10,10 @@ func usage() -> Never {
     agentcreds — AI-first secret store
 
     USAGE:
+      agentcreds setup [--agent <id>]  register the MCP server with your agent host(s)
+                                       auto-detects claude-code, codex, opencode, cursor
+      agentcreds skill                 print the agent guidance (pipe into AGENTS.md)
+      agentcreds doctor                check that everything is wired up
       agentcreds mcp --client <name>   MCP stdio shim (register in your agent host)
       agentcreds add <name> --host <api.host.com> [--host …] [--kind opaque|oauthRefresh|awsRoot|githubApp]
                             [--header <X-Api-Key> [--header-prefix "token "]] [--basic-user <username>]
@@ -54,12 +58,107 @@ func approveLocally(reason: String) -> Bool {
 
 func openVault() throws -> VaultStore { try VaultStore.openDefault() }
 
+extension String {
+    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
+}
+
+/// Absolute path to this binary, so MCP registration survives PATH changes.
+func executablePath() -> String {
+    if let path = Bundle.main.executablePath { return path }
+    return URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
+}
+
+@discardableResult
+func shell(_ launchPath: String, _ arguments: [String]) -> (status: Int32, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: launchPath)
+    process.arguments = arguments
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do { try process.run() } catch { return (-1, "\(error)") }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+}
+
+func which(_ tool: String) -> String? {
+    let result = shell("/usr/bin/env", ["which", tool])
+    let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return result.status == 0 && !path.isEmpty ? path : nil
+}
+
+var skillURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude/skills/\(AgentSkill.name)/SKILL.md")
+}
+
+func daemonReachable() -> Bool {
+    guard let fd = try? UnixSocket.connect(to: IPCPaths.socketPath) else { return false }
+    close(fd)
+    return true
+}
+
+func proxyListening() -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = UInt16(EgressProxy.port).bigEndian
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    return withUnsafePointer(to: &addr) { p in
+        p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+        }
+    }
+}
+
+func mcpRegistered() -> Bool {
+    guard let claude = which("claude") else { return false }
+    return shell(claude, ["mcp", "list"]).output.contains("agentcreds")
+}
+
+
+
+/// Starts the daemon if it is not already up, then waits for its socket.
+/// Without this a fresh install fails its very first agent call, since nothing
+/// has launched agentcredsd yet.
+func startDaemonIfNeeded() -> Int32? {
+    if let fd = try? UnixSocket.connect(to: IPCPaths.socketPath) { return fd }
+    let daemon = URL(fileURLWithPath: executablePath())
+        .deletingLastPathComponent().appendingPathComponent("agentcredsd")
+    guard FileManager.default.isExecutableFile(atPath: daemon.path) else { return nil }
+    let process = Process()
+    process.executableURL = daemon
+    // Detach the daemon's stdio. It must never inherit ours: our stdout IS the
+    // MCP JSON-RPC channel, and an inherited pipe also stays open after this
+    // shim exits, hanging whatever is reading us.
+    let logURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/agent-creds.log")
+    if !FileManager.default.fileExists(atPath: logURL.path) {
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+    }
+    if let log = try? FileHandle(forWritingTo: logURL) {
+        try? log.seekToEnd()
+        process.standardOutput = log
+        process.standardError = log
+    } else {
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+    }
+    process.standardInput = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
+    for _ in 0..<50 {                       // up to ~5s for launch + Keychain unlock
+        usleep(100_000)
+        if let fd = try? UnixSocket.connect(to: IPCPaths.socketPath) { return fd }
+    }
+    return nil
+}
+
 func runShim(client: String) -> Never {
-    let fd: Int32
-    do {
-        fd = try UnixSocket.connect(to: IPCPaths.socketPath)
-    } catch {
-        FileHandle.standardError.write(Data("agentcreds: cannot reach daemon at \(IPCPaths.socketPath) — is agentcredsd running? (\(error))\n".utf8))
+    guard let fd = startDaemonIfNeeded() else {
+        FileHandle.standardError.write(Data("agentcreds: could not reach or start the daemon (\(IPCPaths.socketPath)). Run `agentcreds doctor`.\n".utf8))
         exit(1)
     }
     let socketHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -148,6 +247,97 @@ do {
             try identity.save()
             print("Identity updated.")
         }
+
+    case "skill":
+        print(AgentSkill.markdown)
+
+    case "setup":
+        let executable = executablePath()
+        let only = flagValue("--agent", in: rest)
+
+        // The guidance an agent needs: not how to call the tools (the schemas
+        // cover that) but WHEN to reach for them, and never to ask for a secret
+        // in chat. Canonical copy lives with the vault; hosts get it in their
+        // own format.
+        let guidanceURL = IPCPaths.ensureDirectory().appendingPathComponent("AGENT.md")
+        try Data(AgentSkill.markdown.utf8).write(to: guidanceURL, options: .atomic)
+
+        var lines: [String] = []
+        let hosts = AgentHost.all.filter { host in
+            if let only { return host.id == only }
+            return host.isPresent()
+        }
+
+        if hosts.isEmpty {
+            if let only {
+                print("Unknown or unavailable agent “\(only)”. Known: \(AgentHost.all.map(\.id).joined(separator: ", "))")
+                exit(64)
+            }
+            lines.append("No supported agent host detected.")
+        }
+
+        for host in hosts {
+            lines.append(host.register(executable))
+            if host.id == "claude-code" {
+                try FileManager.default.createDirectory(at: skillURL.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                try Data(AgentSkill.markdown.utf8).write(to: skillURL, options: .atomic)
+                lines.append("Claude Code — skill installed at ~/.claude/skills/agent-creds/")
+            }
+        }
+
+        for line in lines { print("  ✓ \(line)") }
+        // Hosts that read AGENTS.md rather than skills get a pointer to the
+        // canonical copy instead of us rewriting their instruction file.
+        if hosts.contains(where: { $0.id == "codex" || $0.id == "opencode" }) {
+            print("")
+            print("  Codex / opencode read AGENTS.md rather than skills. To give them the")
+            print("  same guidance, append it to your AGENTS.md:")
+            print("      agentcreds skill >> ~/.codex/AGENTS.md")
+            print("  (the MCP tool descriptions work without this; it mainly stops an agent")
+            print("   from asking you to paste a secret into the chat)")
+        }
+        print("")
+        print("Next:")
+        if Identity.load().email == nil {
+            print("  agentcreds identity --email you@example.com")
+        }
+        print("  agentcreds add <name> --host <api.host.com>     # store your first credential")
+        print("  agentcreds doctor                              # verify everything")
+        if !daemonReachable() {
+            print("")
+            print("The daemon is not running. Start it with ./install.sh, or run agentcredsd directly.")
+        }
+
+    case "doctor":
+        struct Check { let ok: Bool; let label: String; let fix: String? }
+        let identity = Identity.load()
+        let secretCount = (try? openVault().list().count) ?? 0
+        let checks: [Check] = [
+            Check(ok: daemonReachable(), label: "Daemon running (\(IPCPaths.socketPath))",
+                  fix: "start it: ./install.sh  — or run agentcredsd"),
+            Check(ok: proxyListening(), label: "Egress proxy on 127.0.0.1:\(EgressProxy.port)",
+                  fix: "the daemon owns this port; if the daemon is up, check ~/Library/Logs/agent-creds.log"),
+            Check(ok: FileManager.default.fileExists(atPath: skillURL.path),
+                  label: "Agent skill installed", fix: "run: agentcreds setup"),
+            Check(ok: AgentHost.all.contains { $0.isPresent() },
+                  label: "Agent host detected (\(AgentHost.all.filter { $0.isPresent() }.map(\.display).joined(separator: ", ").ifEmpty("none")))",
+                  fix: "install Claude Code, Codex, opencode, or Cursor"),
+            Check(ok: mcpRegistered(), label: "MCP server registered with Claude Code",
+                  fix: "run: agentcreds setup"),
+            Check(ok: identity.email != nil, label: "Identity set (\(identity.email ?? "not set"))",
+                  fix: "run: agentcreds identity --email you@example.com"),
+            Check(ok: secretCount > 0, label: "Vault has \(secretCount) secret(s)",
+                  fix: "add one: agentcreds add github/token --host api.github.com"),
+        ]
+        for check in checks {
+            print("  \(check.ok ? "✓" : "✗")  \(check.label)")
+            if !check.ok, let fix = check.fix { print("       → \(fix)") }
+        }
+        let failed = checks.filter { !$0.ok }.count
+        print("")
+        print(failed == 0 ? "All good — your agent can use the vault." : "\(failed) item(s) need attention.")
+        exit(failed == 0 ? 0 : 1)
 
     case "audit":
         let limit = flagValue("--limit", in: rest).flatMap { Int($0) } ?? 50

@@ -17,6 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 keyEquivalent: "q"))
         statusItem.menu = menu
 
+        // Singleton: a second daemon would unlink and steal the first one's
+        // socket, silently splitting agents across two vault handles.
+        if let existing = try? UnixSocket.connect(to: IPCPaths.socketPath) {
+            close(existing)
+            NSLog("agent-creds: another daemon is already running; exiting")
+            NSApp.terminate(nil)
+            return
+        }
+
         do {
             let vault = try VaultStore.openDefault()
             let server = try SocketServer(vault: vault)
