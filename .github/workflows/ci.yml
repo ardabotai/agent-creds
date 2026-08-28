@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Build (release)
+        run: swift build -c release
+
+  hygiene:
+    name: Repo hygiene
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # A credential tool must never ship someone's real address or key.
+      - name: No personal data or real secrets committed
+        run: |
+          if grep -rnE "(ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)" \
+               --include='*.swift' --include='*.md' --include='*.sh' --include='*.yml' .; then
+            echo "::error::possible real credential committed"
+            exit 1
+          fi
+          if grep -rn "REPLACE WITH A CONTACT EMAIL" CODE_OF_CONDUCT.md >/dev/null; then
+            echo "::warning::CODE_OF_CONDUCT.md still has a placeholder contact"
+          fi
+
+      - name: Shell scripts parse
+        run: bash -n install.sh && bash -n uninstall.sh

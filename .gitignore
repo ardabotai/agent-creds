@@ -1,0 +1,15 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# macOS
+.DS_Store
+
+# Local state — never commit a vault or a key
+*.jsonl
+vault.json
+kek.devonly
