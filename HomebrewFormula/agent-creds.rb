@@ -5,7 +5,7 @@ class AgentCreds < Formula
   desc "Credential vault that lets AI agents use secrets without ever seeing them"
   homepage "https://github.com/ardabotai/agent-creds"
   url "https://github.com/ardabotai/agent-creds/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
+  sha256 "61738d94449b2b94e5409be6e9479066c88e3afd194f10b5b00e3cf9594edb64"
   license "MIT"
   head "https://github.com/ardabotai/agent-creds.git", branch: "main"
 
