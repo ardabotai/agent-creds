@@ -3,7 +3,7 @@
 ## 1.0.0
 
 First release. A macOS secret store where agents can use credentials without
-ever seeing them.
+ever seeing them. Maintained by ArdaBot, Inc.
 
 ### Agent surfaces
 - MCP server with `list_secrets`, `save_secret`, `request_secret`,

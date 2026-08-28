@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
-LABEL="dev.agentcreds.daemon"
+LABEL="com.ardabot.agentcreds.daemon"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true

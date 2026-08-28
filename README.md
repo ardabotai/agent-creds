@@ -37,7 +37,7 @@ nothing more:
 Requires macOS 14+ and a Swift 5.9+ toolchain (Xcode 15+).
 
 ```sh
-git clone https://github.com/YOUR-ORG/agent-creds.git
+git clone https://github.com/ArdaBot/agent-creds.git
 cd agent-creds
 ./install.sh
 ```
@@ -178,4 +178,4 @@ boundaries that are known limitations rather than vulnerabilities.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Copyright © 2026 ArdaBot, Inc.

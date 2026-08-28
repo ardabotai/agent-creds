@@ -33,7 +33,10 @@ public enum Envelope {
 /// keychain-access-groups entitlement, so the unsigned dev build uses a
 /// local-only item for now.
 public struct KeychainKEKProvider {
-    private let service = "dev.agentcreds.master"
+    private let service = "com.ardabot.agentcreds.master"
+    /// Pre-1.0 service name. Read once, migrated, then removed — an installed
+    /// vault must survive the rename, since losing the KEK loses every secret.
+    private let legacyService = "dev.agentcreds.master"
     private let account = "kek"
 
     public init() {}
@@ -59,6 +62,8 @@ public struct KeychainKEKProvider {
         }
         guard status == errSecItemNotFound else { throw CryptoError.keychain(status) }
 
+        if let migrated = try migrateLegacyKEK() { return migrated }
+
         let key = SymmetricKey(size: .bits256)
         let keyData = key.withUnsafeBytes { Data($0) }
         let add: [String: Any] = [
@@ -70,6 +75,39 @@ public struct KeychainKEKProvider {
         let addStatus = SecItemAdd(add as CFDictionary, nil)
         guard addStatus == errSecSuccess else { throw CryptoError.keychain(addStatus) }
         return key
+    }
+
+    /// Moves a pre-1.0 KEK to the current service name, so upgrading does not
+    /// silently strand an existing vault. Returns nil when there is nothing to
+    /// migrate.
+    private func migrateLegacyKEK() throws -> SymmetricKey? {
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+        ]
+        var legacyItem: CFTypeRef?
+        let status = SecItemCopyMatching(legacyQuery as CFDictionary, &legacyItem)
+        guard status == errSecSuccess, let data = legacyItem as? Data else { return nil }
+
+        let add: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+        ]
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            throw CryptoError.keychain(addStatus)
+        }
+        // Only drop the old copy once the new one is safely stored.
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyService,
+            kSecAttrAccount as String: account,
+        ] as CFDictionary)
+        return SymmetricKey(data: data)
     }
 
     private func loadOrCreateFileKEK() throws -> SymmetricKey {

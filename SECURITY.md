@@ -1,7 +1,7 @@
 # Security Policy
 
-agent-creds holds credentials, so security reports get priority over everything
-else in this repo.
+agent-creds is maintained by ArdaBot, Inc. It holds credentials, so security
+reports get priority over everything else in this repo.
 
 ## Reporting a vulnerability
 
