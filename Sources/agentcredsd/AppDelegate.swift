@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             proxy.start()
             self.proxy = proxy
             NSLog("agent-creds listening at \(IPCPaths.socketPath); egress proxy on 127.0.0.1:\(EgressProxy.port)")
+        } catch UnixSocketError.alreadyInUse(let path) {
+            NSLog("agent-creds: another daemon already owns \(path); exiting")
+            NSApp.terminate(nil)
         } catch {
             NSLog("agent-creds failed to start: \(error)")
             NSApp.terminate(nil)

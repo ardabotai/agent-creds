@@ -1,6 +1,6 @@
 # agent-creds
 
-**v1.0.0 · macOS 14+**
+**v1.0.1 · macOS 14+**
 
 An AI-first secret store. Agents can save, request, and *use* credentials over
 MCP — but **an agent never sees a stored secret**. Every release is a human

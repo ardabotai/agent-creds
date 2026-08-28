@@ -38,6 +38,7 @@ public struct ClientHello: Codable {
 public enum UnixSocketError: Error {
     case pathTooLong
     case syscall(String, Int32)
+    case alreadyInUse(String)
 }
 
 public enum UnixSocket {
@@ -59,6 +60,14 @@ public enum UnixSocket {
     }
 
     public static func listen(at path: String) throws -> Int32 {
+        // Only remove a socket nobody is answering on. Unlinking a live one
+        // orphans the running daemon's inode: it keeps its listening fd, the
+        // path still looks like a healthy socket, and every client gets
+        // ECONNREFUSED with no indication of why.
+        if let live = try? connect(to: path) {
+            close(live)
+            throw UnixSocketError.alreadyInUse(path)
+        }
         unlink(path)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw UnixSocketError.syscall("socket", errno) }

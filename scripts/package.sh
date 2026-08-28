@@ -51,22 +51,28 @@ for bin in agentcreds agentcredsd; do
   codesign --verify --strict --verbose=2 "$STAGE/$bin"
 done
 
-TARBALL="$DIST/agent-creds-$VERSION-macos-universal.tar.gz"
-echo "==> Packaging $TARBALL"
-tar -czf "$TARBALL" -C "$DIST" "agent-creds-$VERSION"
+# notarytool accepts only .zip, .pkg, or .dmg — not tarballs. ditto is used
+# rather than `zip` because it preserves code signatures intact.
+ARCHIVE="$DIST/agent-creds-$VERSION-macos-universal.zip"
+echo "==> Packaging $ARCHIVE"
+rm -f "$ARCHIVE"
+ditto -c -k --keepParent "$STAGE" "$ARCHIVE"
 
 if [ -n "${KEYCHAIN_PROFILE:-}" ]; then
   echo "==> Notarizing (this waits for Apple)"
-  xcrun notarytool submit "$TARBALL" --keychain-profile "$KEYCHAIN_PROFILE" --wait
-  # A tarball cannot be stapled; the binaries inside are notarized and Gatekeeper
-  # verifies them online. Ship a .dmg or .pkg later if offline stapling matters.
-  echo "==> Notarized. Verifying one binary:"
-  spctl --assess --type execute --verbose "$STAGE/agentcreds" || true
+  xcrun notarytool submit "$ARCHIVE" --keychain-profile "$KEYCHAIN_PROFILE" --wait
+  # Bare executables cannot be stapled (stapling needs a bundle, .dmg, or .pkg),
+  # so Gatekeeper verifies these tickets online. Ship a .dmg if offline
+  # verification ever matters.
+  echo "==> Verifying signatures (spctl reports \"not an app\" for bare"
+  echo "    executables — the notarization status above is what matters):"
+  for bin in agentcreds agentcredsd; do
+    codesign --verify --strict --verbose=1 "$STAGE/$bin" 2>&1 | sed 's/^/    /'
+  done
 else
   echo "==> KEYCHAIN_PROFILE not set — skipping notarization (binaries are signed only)"
 fi
 
-shasum -a 256 "$TARBALL" | tee "$TARBALL.sha256"
+shasum -a 256 "$ARCHIVE" | tee "$ARCHIVE.sha256"
 echo
-echo "Done: $TARBALL"
-echo "Use the sha256 above in the Homebrew formula."
+echo "Done: $ARCHIVE"

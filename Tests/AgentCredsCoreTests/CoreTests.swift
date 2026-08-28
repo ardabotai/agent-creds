@@ -237,3 +237,40 @@ final class AuditLogTests: XCTestCase {
         XCTAssertTrue(try temporaryLog().recent().isEmpty)
     }
 }
+
+final class UnixSocketTests: XCTestCase {
+    /// A second listener must not unlink a socket that someone is answering on.
+    /// Doing so orphans the first daemon's inode: it keeps its listening fd, the
+    /// path still looks like a healthy socket, and every client gets
+    /// ECONNREFUSED with nothing in the logs to explain it.
+    func testListenRefusesToStealALiveSocket() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ac-\(UUID().uuidString.prefix(8)).sock").path
+        let first = try UnixSocket.listen(at: path)
+        defer { close(first); unlink(path) }
+
+        XCTAssertThrowsError(try UnixSocket.listen(at: path)) { error in
+            guard case UnixSocketError.alreadyInUse = error else {
+                return XCTFail("expected alreadyInUse, got \(error)")
+            }
+        }
+
+        // The original listener is still reachable — not orphaned.
+        let client = try UnixSocket.connect(to: path)
+        close(client)
+    }
+
+    /// A socket file left behind by a crashed daemon must not block startup.
+    func testListenReclaimsAStaleSocket() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ac-\(UUID().uuidString.prefix(8)).sock").path
+        let dead = try UnixSocket.listen(at: path)
+        close(dead)                                  // simulate a crashed daemon
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+
+        let revived = try UnixSocket.listen(at: path)
+        defer { close(revived); unlink(path) }
+        let client = try UnixSocket.connect(to: path)
+        close(client)
+    }
+}

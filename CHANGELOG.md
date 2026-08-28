@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+- A second daemon could unlink a socket another daemon was actively listening
+  on. The original kept its listening file descriptor and the path still looked
+  like a healthy socket, but every client got `ECONNREFUSED` — with the daemon
+  alive, `lsof` showing it holding the socket, and the log saying "listening".
+  A listener now refuses to displace one that answers, and a socket left by a
+  crashed daemon is still reclaimed.
+- `scripts/package.sh` produced a `.tar.gz`, which the Apple notary service
+  rejects; it now builds a `.zip` with `ditto` so signatures survive, and no
+  longer prints a misleading `spctl` rejection for bare executables.
+
 ## 1.0.0
 
 First release. A macOS secret store where agents can use credentials without
