@@ -36,8 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         do {
-            let vault = try VaultStore(kekProvider: KEKResolver.provider(ceremony: passkeyCeremony))
-            let server = try SocketServer(vault: vault)
+            let kekProvider = try KEKResolver.provider(ceremony: passkeyCeremony)
+            let vault = try VaultStore(kekProvider: kekProvider)
+            let server = try SocketServer(vault: vault,
+                                          kekPromptsItself: kekProvider.promptsEveryTime)
             server.start()
             self.server = server
             let proxy = try ProxyServer(vault: vault)

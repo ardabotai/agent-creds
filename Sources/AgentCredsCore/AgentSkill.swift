@@ -32,14 +32,24 @@ context.
 
 ## When you need a credential
 
-1. **Look first.** Call `list_secrets` to see what already exists. Names look
-   like `github/token` or `stripe/api-key`. You get names and kinds only.
-2. **If it exists**, call `request_secret(name, purpose)`. Blocks up to ~2 min
-   while the user approves.
-3. **If it does not exist**, call `capture_secret(name, purpose, allowed_hosts)`.
-   The user provides it securely; you get a handle back immediately.
+**Call `use_credential` and let the vault sort it out.** Pass the site you are
+working with and an honest purpose:
 
-Both return a temporary credential handle, never a value:
+```
+use_credential(for: "github.com", purpose: "push the v1.2 release tag")
+```
+
+You do not need to know whether the user already has it. The vault checks:
+
+- **It has one** → the user gets a dialog naming you, the credential, your
+  stated purpose, and a duration to choose. Approving releases it.
+- **It does not** → the user gets a secure window to provide it, and it is
+  saved for next time.
+
+Either way you get the same handle back, and never the value. `list_secrets`
+shows what exists if you want to look first, but you do not have to.
+
+The handle looks like this — never a value:
 
 ```json
 {"payload":{"proxyHandle":{"proxyURL":"http://127.0.0.1:9977","token":"acred_9f2c..."}},

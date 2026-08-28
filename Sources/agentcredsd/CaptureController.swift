@@ -6,22 +6,31 @@ import AgentCredsCore
 final class CaptureController {
     /// Blocking; called from a connection thread while the agent's tools/call
     /// waits. Returns the pasted value, or nil if the user cancelled.
-    func capture(client: String, name: String, purpose: String) -> String? {
+    func capture(client: String, name: String, purpose: String, hosts: [String] = []) -> String? {
         var result: String?
         let semaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.async {
-            result = self.runPanel(client: client, name: name, purpose: purpose)
+            result = self.runPanel(client: client, name: name, purpose: purpose, hosts: hosts)
             semaphore.signal()
         }
         semaphore.wait()
         return result
     }
 
-    private func runPanel(client: String, name: String, purpose: String) -> String? {
+    private func runPanel(client: String, name: String, purpose: String, hosts: [String]) -> String? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Provide secret “\(name)”"
-        alert.informativeText = "\(client) needs “\(name)”\nPurpose: \(purpose)\n\nPaste the value below. It is saved to your encrypted vault — the agent never sees it, only a temporary credential minted from it."
+        let scope = hosts.isEmpty ? "" : "\nScoped to: \(hosts.joined(separator: ", "))"
+        alert.informativeText = """
+        \(client) needs this and your vault does not have it yet.
+
+        Stated purpose: “\(purpose)”
+        ▲ Written by the agent — a claim, not a fact\(scope)
+
+        Paste or AutoFill the value below. It is saved to your encrypted vault; \
+        the agent receives only a temporary credential minted from it, never the value itself.
+        """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Save to Vault")
         alert.addButton(withTitle: "Cancel")

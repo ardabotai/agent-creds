@@ -75,6 +75,28 @@ public final class VaultStore {
         }
     }
 
+    /// Finds credentials by vault name or by the host they are scoped to, so a
+    /// caller can ask for "github.com" without knowing it was saved as
+    /// "github/token". Exact name match wins outright; otherwise every
+    /// host-scoped candidate is returned for the caller to disambiguate.
+    public func find(matching query: String) throws -> [SecretRecord] {
+        lock.lock(); defer { lock.unlock() }
+        let records = try loadRecords()
+        let needle = query.lowercased()
+        if let exact = records.first(where: { $0.name.lowercased() == needle }) {
+            return [exact]
+        }
+        let host = URL(string: needle.contains("//") ? needle : "https://\(needle)")?.host?.lowercased()
+            ?? needle
+        return records.filter { record in
+            if record.name.lowercased().contains(needle) { return true }
+            return record.policy.allowedHosts.contains { allowed in
+                let allowed = allowed.lowercased()
+                return host == allowed || host.hasSuffix("." + allowed) || allowed.hasSuffix("." + host)
+            }
+        }
+    }
+
     public func record(named name: String) throws -> SecretRecord? {
         lock.lock(); defer { lock.unlock() }
         return try loadRecords().first { $0.name == name }

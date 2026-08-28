@@ -12,8 +12,11 @@ final class SocketServer {
     private var connections: [ObjectIdentifier: Connection] = [:]
     private let lock = NSLock()
 
-    init(vault: VaultStore) throws {
+    private let kekPromptsItself: Bool
+
+    init(vault: VaultStore, kekPromptsItself: Bool = false) throws {
         self.vault = vault
+        self.kekPromptsItself = kekPromptsItself
         self.listenFD = try UnixSocket.listen(at: IPCPaths.socketPath)
     }
 
@@ -27,7 +30,9 @@ final class SocketServer {
     private func acceptOne() {
         let fd = accept(listenFD, nil, nil)
         guard fd >= 0 else { return }
-        let connection = Connection(fd: fd, handler: MCPHandler(vault: vault))
+        let connection = Connection(fd: fd,
+                                    handler: MCPHandler(vault: vault,
+                                                        kekPromptsItself: kekPromptsItself))
         lock.lock()
         connections[ObjectIdentifier(connection)] = connection
         lock.unlock()

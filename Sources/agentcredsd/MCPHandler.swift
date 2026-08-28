@@ -9,9 +9,13 @@ final class MCPHandler {
     private let vault: VaultStore
     private let audit = AuditLog.shared
     private let capture = CaptureController()
+    /// True in passkey mode, where unwrapping raises its own system sheet — so
+    /// we must not also run a separate Touch ID prompt for the same release.
+    private let kekPromptsItself: Bool
 
-    init(vault: VaultStore) {
+    init(vault: VaultStore, kekPromptsItself: Bool = false) {
         self.vault = vault
+        self.kekPromptsItself = kekPromptsItself
     }
 
     func handle(message: Data, client: String) -> Data? {
@@ -67,6 +71,20 @@ final class MCPHandler {
                         "username": ["type": "string", "description": "With injection=basic, the username half"],
                     ],
                     "required": ["name", "value", "allowed_hosts"],
+                ],
+            ],
+            [
+                "name": "use_credential",
+                "description": "THE credential tool — use this whenever a task needs a password, API key, token, or login. Pass the site or service you are working with (\"github.com\", \"api.stripe.com\") or a known vault name. The vault figures out the rest: if it already holds a matching credential the user is asked to approve this use and pick a duration; if it does not, the user is asked to provide it in a secure window. Either way you get back the same short-lived handle and never the value. NEVER ask the user for a secret in chat — call this instead.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "for": ["type": "string", "description": "Site, host, or vault name, e.g. github.com or github/token"],
+                        "purpose": ["type": "string", "description": "Why you need it, in plain words — shown to the user verbatim as your claim"],
+                        "allowed_hosts": ["type": "array", "items": ["type": "string"],
+                                          "description": "Only used when the credential is new; defaults to the host in `for`"],
+                    ],
+                    "required": ["for", "purpose"],
                 ],
             ],
             [
@@ -161,6 +179,67 @@ final class MCPHandler {
                 _ = try vault.save(name: name, kind: kind, value: Data(value.utf8),
                                    policy: SecretPolicy(allowedHosts: hosts, injection: Self.injection(from: args)))
                 return toolReply(id: id, text: "Saved “\(name)” (\(kind.rawValue)). The plaintext can never be read back.")
+
+            case "use_credential":
+                guard let query = args["for"] as? String else {
+                    return reply(id: id, errorMessage: "`for` is required")
+                }
+                let purpose = args["purpose"] as? String ?? "(no purpose given)"
+                let matches = try vault.find(matching: query)
+
+                if matches.count > 1 {
+                    let names = matches.map(\.name).joined(separator: ", ")
+                    return toolReply(id: id, text: "Several credentials match “\(query)”: \(names). Call use_credential again with the exact one.")
+                }
+
+                if let record = matches.first {
+                    // Known credential: ask permission, and let the user scope
+                    // how long rather than assuming the policy default.
+                    let approval = ApprovalDialog.present(CredentialApproval(
+                        client: client, credentialName: record.name,
+                        hosts: record.policy.allowedHosts, purpose: purpose))
+                    guard case .approved(let ttl) = approval else {
+                        audit.record(client: client, action: "use_credential",
+                                     secretName: record.name, decision: "denied")
+                        return toolReply(id: id, text: "The user denied this use of “\(record.name)”.")
+                    }
+                    // In passkey mode the unwrap raises its own system sheet, so
+                    // a second Touch ID prompt for one release would be noise.
+                    if !kekPromptsItself,
+                       !approve(reason: "Release “\(record.name)” to \(client)",
+                                client: client, action: "use_credential", secretName: record.name) {
+                        return toolReply(id: id, text: "The user denied this use of “\(record.name)”.")
+                    }
+                    audit.record(client: client, action: "use_credential",
+                                 secretName: record.name, decision: "released")
+                    return toolReply(id: id, text: try mintedCredentialText(
+                        record: record, client: client, purpose: purpose, ttlSeconds: ttl))
+                }
+
+                // Not in the vault: ask the user for it rather than making the
+                // agent ask in chat. Same tool call, different question.
+                var hosts = args["allowed_hosts"] as? [String] ?? []
+                if hosts.isEmpty {
+                    let derived = URL(string: query.contains("//") ? query : "https://\(query)")?.host
+                    guard let derived else {
+                        return toolReply(id: id, text: "“\(query)” is not in the vault and is not a host. Retry with allowed_hosts, e.g. [\"api.example.com\"].")
+                    }
+                    hosts = [derived]
+                }
+                let name = query.contains("/") && !query.contains("//") ? query : "\(hosts[0])/credential"
+                guard let value = capture.capture(client: client, name: name,
+                                                  purpose: purpose, hosts: hosts) else {
+                    audit.record(client: client, action: "use_credential",
+                                 secretName: name, decision: "cancelled")
+                    return toolReply(id: id, text: "The user cancelled without providing a credential.")
+                }
+                let saved = try vault.save(name: name, kind: .opaque, value: Data(value.utf8),
+                                           policy: SecretPolicy(allowedHosts: hosts,
+                                                                injection: Self.injection(from: args)))
+                audit.record(client: client, action: "use_credential",
+                             secretName: name, decision: "provided")
+                return toolReply(id: id, text: try mintedCredentialText(
+                    record: saved, client: client, purpose: purpose))
 
             case "request_secret":
                 guard let name = args["name"] as? String else {
@@ -319,12 +398,13 @@ final class MCPHandler {
     }
 
     /// Unwraps the root, mints a temp handle, and serializes it for the agent.
-    private func mintedCredentialText(record: SecretRecord, client: String, purpose: String) throws -> String {
+    private func mintedCredentialText(record: SecretRecord, client: String, purpose: String,
+                                      ttlSeconds: Int? = nil) throws -> String {
         let root = try vault.revealValue(of: record)
         let cred = try minter(for: record.kind).mint(
             record: record, rootSecret: root,
             request: MintRequest(client: client, secretName: record.name, purpose: purpose,
-                                 ttlSeconds: record.policy.defaultTTLSeconds))
+                                 ttlSeconds: ttlSeconds ?? record.policy.defaultTTLSeconds))
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return String(data: try encoder.encode(cred), encoding: .utf8) ?? "{}"

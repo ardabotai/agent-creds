@@ -345,3 +345,39 @@ final class PasskeyKEKTests: XCTestCase {
         XCTAssertEqual(KEKConfig().source, .keychain)
     }
 }
+
+final class CredentialLookupTests: XCTestCase {
+    private func vault() throws -> VaultStore {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("vault.json")
+        let store = try VaultStore(url: url, kek: SymmetricKey(size: .bits256))
+        try store.save(name: "github/token", kind: .opaque, value: Data("a".utf8),
+                       policy: SecretPolicy(allowedHosts: ["api.github.com"]))
+        try store.save(name: "stripe/api-key", kind: .opaque, value: Data("b".utf8),
+                       policy: SecretPolicy(allowedHosts: ["api.stripe.com"]))
+        return store
+    }
+
+    func testExactNameWinsOutright() throws {
+        let found = try vault().find(matching: "github/token")
+        XCTAssertEqual(found.map(\.name), ["github/token"])
+    }
+
+    /// An agent knows the site it is working with, not what the user named the
+    /// secret. Both must resolve to the same credential.
+    func testFindsByHostTheAgentIsActuallyTalkingTo() throws {
+        XCTAssertEqual(try vault().find(matching: "api.github.com").map(\.name), ["github/token"])
+        XCTAssertEqual(try vault().find(matching: "github.com").map(\.name), ["github/token"])
+        XCTAssertEqual(try vault().find(matching: "https://api.stripe.com/v1/charges").map(\.name),
+                       ["stripe/api-key"])
+    }
+
+    func testUnknownDomainFindsNothing() throws {
+        XCTAssertTrue(try vault().find(matching: "example.com").isEmpty)
+        // ...which is the signal to ask the user for it rather than to fail.
+    }
+
+    func testUnrelatedHostDoesNotMatchOnSuffixAccident() throws {
+        XCTAssertTrue(try vault().find(matching: "evilgithub.com").isEmpty)
+    }
+}
