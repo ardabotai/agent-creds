@@ -10,7 +10,6 @@ class AgentCreds < Formula
   head "https://github.com/ardabotai/agent-creds.git", branch: "main"
 
   depends_on xcode: ["15.0", :build]
-  depends_on :macos
   depends_on macos: :sonoma
 
   def install
