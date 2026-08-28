@@ -37,7 +37,7 @@ nothing more:
 Requires macOS 14+ and a Swift 5.9+ toolchain (Xcode 15+).
 
 ```sh
-git clone https://github.com/ArdaBot/agent-creds.git
+git clone https://github.com/ardabotai/agent-creds.git
 cd agent-creds
 ./install.sh
 ```
