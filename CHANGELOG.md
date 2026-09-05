@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added — Mac app UI (v1)
+- Polished menubar: vault status, secrets list (names/kinds/hosts only), identity,
+  recent audit, doctor/setup shortcuts, passkey protect, and quit.
+- Lightweight management window (SwiftUI): list/add/remove secrets (hosts
+  required), identity editor, passkey status/enroll, and audit browser.
+- Secret values never appear in list/UI surfaces — only the secure Add Secret
+  field accepts plaintext, matching the existing capture dialog invariant.
+- `SecretMetadata` now includes `allowedHosts` for UI/CLI listing (still no values).
+
 ### Added — Phase 3: passkey-derived vault key
 - The vault KEK can now be derived from a WebAuthn passkey's PRF output rather
   than stored in the Keychain. The assertion *is* the key release: without a

@@ -71,7 +71,8 @@ public final class VaultStore {
     public func list() throws -> [SecretMetadata] {
         lock.lock(); defer { lock.unlock() }
         return try loadRecords().map {
-            SecretMetadata(name: $0.name, kind: $0.kind, createdAt: $0.createdAt)
+            SecretMetadata(name: $0.name, kind: $0.kind, createdAt: $0.createdAt,
+                           allowedHosts: $0.policy.allowedHosts)
         }
     }
 

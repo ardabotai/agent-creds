@@ -92,15 +92,19 @@ public struct SecretRecord: Codable, Identifiable {
     }
 }
 
-public struct SecretMetadata: Codable {
+public struct SecretMetadata: Codable, Identifiable {
+    public var id: String { name }
     public let name: String
     public let kind: SecretKind
     public let createdAt: Date
+    /// Host allowlist only — never the secret value. Empty means deny-all.
+    public let allowedHosts: [String]
 
-    public init(name: String, kind: SecretKind, createdAt: Date) {
+    public init(name: String, kind: SecretKind, createdAt: Date, allowedHosts: [String] = []) {
         self.name = name
         self.kind = kind
         self.createdAt = createdAt
+        self.allowedHosts = allowedHosts
     }
 }
 
