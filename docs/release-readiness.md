@@ -14,7 +14,7 @@ checks must pass; signed artifacts alone are not release proof.
   `dist/ios-device/AgentCreds.ipa`. This is not a TestFlight release.
 - Approval-link site source prepared in the separate `ardabotai/agentcreds-site`
   repository: preserve passkey association, add both app identifiers and a strict
-  UUID-only fallback route. Preview build and HTTP checks pass, with no scripts,
+  UUID-only fallback route. Production deployment `dpl_EdiRkoeP8oXNeEQFRk8vXtuR4dGJ` and HTTP checks pass, with no scripts,
   no-store, no-referrer, noindex and restrictive CSP.
 
 ## Release blockers
@@ -29,8 +29,8 @@ checks must pass; signed artifacts alone are not release proof.
   verify Apple's acceptance and the stapled DMG before publishing.
 - The paired physical iPhone is unavailable. Connect and unlock it, install the
   signed development package, and complete the device matrix below.
-- Verify production association/fallback and Apple's signed-device Universal Link
-  handling. HTTP association success alone is not device proof.
+- Verify Apple's signed-device Universal Link handling. Production HTTP association
+  and fallback are verified, but HTTP success alone is not device proof.
 
 ## Physical acceptance matrix
 

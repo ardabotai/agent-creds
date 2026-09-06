@@ -99,10 +99,10 @@ OS settings, Focus and Apple's best-effort delivery can delay or suppress alerts
 - Neither link contains a redemption token, grant, or key.
 - Mac URL handling requires the packaged app's scheme registration.
 
-Both apps have `applinks:` entitlements. HTTPS opening additionally requires Apple
-team signing and an AASA deployment on the approval-link domain. The example under
-`AssociatedDomains` must be merged with the domain's existing passkey association.
-The relay deployment does not deploy that separate domain or a web fallback.
+Both apps have `applinks:` entitlements. The production approval-link domain now
+serves an AASA association for both apps while preserving the existing passkey
+association, plus a private installation fallback. Signed-device Universal Link
+opening still needs verification. See [release status](../docs/release-readiness.md).
 
 ## Validation and demo
 
