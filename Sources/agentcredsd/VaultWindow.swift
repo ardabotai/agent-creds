@@ -91,8 +91,10 @@ struct VaultRootView: View {
             Button("Cancel", role: .cancel) { pendingDelete = nil }
             Button("Delete", role: .destructive) {
                 if let name = pendingDelete {
-                    do { try model.deleteSecret(named: name) }
-                    catch { formError = error.localizedDescription }
+                    Task {
+                        do { try await model.deleteSecret(named: name) }
+                        catch { formError = error.localizedDescription }
+                    }
                 }
                 pendingDelete = nil
             }
@@ -242,7 +244,7 @@ struct VaultRootView: View {
                         Button("Protect vault with a passkey…") {
                             Task { await model.enrollPasskey() }
                         }
-                        .disabled(model.kekConfig.source == .passkey)
+                        .disabled(model.enrolling || model.kekConfig.source == .passkey)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -334,6 +336,11 @@ struct AddSecretSheet: View {
     @State private var hosts = ""
     @State private var kind: SecretKind = .opaque
     @State private var value = ""
+    @State private var saving = false
+    @State private var authentication = "bearer"
+    @State private var headerName = "X-Api-Key"
+    @State private var headerPrefix = ""
+    @State private var username = ""
     @State private var error: String?
 
     var body: some View {
@@ -352,6 +359,17 @@ struct AddSecretSheet: View {
                     ForEach(SecretKind.allCases, id: \.self) { item in
                         Text(item.rawValue).tag(item)
                     }
+                }
+                Picker("Authentication", selection: $authentication) {
+                    Text("Bearer token").tag("bearer")
+                    Text("Custom header").tag("header")
+                    Text("Basic authentication").tag("basic")
+                }
+                if authentication == "header" {
+                    TextField("Header name", text: $headerName)
+                    TextField("Header prefix (optional)", text: $headerPrefix)
+                } else if authentication == "basic" {
+                    TextField("Username", text: $username)
                 }
                 SecureField("Secret value", text: $value)
                     .textContentType(.password)
@@ -372,22 +390,34 @@ struct AddSecretSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 Button("Save to Vault") {
-                    save()
+                    Task { await save() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                .disabled(saving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || hosts.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.isEmpty
                           || value.isEmpty)
             }
         }
         .padding(20)
         .frame(width: 460)
+        .disabled(saving)
+        .interactiveDismissDisabled(saving)
     }
 
-    private func save() {
+    @MainActor
+    private func save() async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
         let hostList = hosts.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
         do {
-            try model.addSecret(name: name, kind: kind, hosts: hostList, value: value)
+            let injection: CredentialInjection
+            switch authentication {
+            case "header": injection = .header(name: headerName, prefix: headerPrefix)
+            case "basic": injection = .basic(username: username)
+            default: injection = .bearer
+            }
+            try await model.addSecret(name: name, kind: kind, hosts: hostList, value: value, injection: injection)
             value = ""
             isPresented = false
         } catch {

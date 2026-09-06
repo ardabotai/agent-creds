@@ -32,6 +32,7 @@ enum PasskeyError: Error, CustomStringConvertible {
 }
 
 final class PasskeyCeremony: NSObject {
+    private let operationLock = NSLock()
     private var anchorWindow: NSWindow?
     private var continuationHandler: ((Result<ASAuthorization, Error>) -> Void)?
     private var controller: ASAuthorizationController?
@@ -89,6 +90,10 @@ final class PasskeyCeremony: NSObject {
     // MARK: - Blocking bridge
 
     private func perform(_ requests: [ASAuthorizationRequest]) throws -> ASAuthorization {
+        guard !Thread.isMainThread else {
+            throw PasskeyError.failed("passkey operations must run off the main thread")
+        }
+        operationLock.lock(); defer { operationLock.unlock() }
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<ASAuthorization, Error>!
         DispatchQueue.main.async {

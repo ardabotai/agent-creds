@@ -4,6 +4,7 @@ import AgentCredsCore
 
 /// Shared state for the menubar and the management window. Never holds plaintext
 /// secret values — only names, kinds, hosts, identity, and audit metadata.
+@MainActor
 final class VaultUIModel: ObservableObject {
     enum Tab: String, CaseIterable, Identifiable {
         case secrets = "Secrets"
@@ -16,6 +17,10 @@ final class VaultUIModel: ObservableObject {
     let vault: VaultStore
     private let passkeyCeremony: PasskeyCeremony
 
+    @Published var enrolling = false
+    private var refreshing = false
+    private var refreshRequested = false
+    private let audit: AuditLog
     @Published var secrets: [SecretMetadata] = []
     @Published var identityEmail: String = ""
     @Published var identityUsername: String = ""
@@ -25,33 +30,43 @@ final class VaultUIModel: ObservableObject {
     @Published var banner: String?
     @Published var selectedTab: Tab = .secrets
 
-    init(vault: VaultStore, passkeyCeremony: PasskeyCeremony) {
+    init(vault: VaultStore, passkeyCeremony: PasskeyCeremony, audit: AuditLog = .shared) {
+        self.audit = audit
         self.vault = vault
         self.passkeyCeremony = passkeyCeremony
         refresh()
     }
 
     func refresh() {
-        do {
-            secrets = try vault.list().sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        } catch {
-            secrets = []
-            banner = "Could not list vault: \(error)"
+        guard !refreshing else { refreshRequested = true; return }
+        refreshing = true
+        let vault = vault
+        Task {
+            let result = await Task.detached {
+                Result { try vault.list().sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
+            }.value
+            switch result {
+            case .success(let items): secrets = items
+            case .failure(let error): banner = "Could not list vault: \(error.localizedDescription)"
+            }
+            let identity = Identity.load()
+            identityEmail = identity.email ?? ""
+            identityUsername = identity.username ?? ""
+            kekConfig = KEKConfig.load()
+            auditEvents = (try? audit.recent(limit: 40))?.reversed() ?? []
+            let protection = kekConfig.source == .passkey ? "passkey-protected" : "Keychain KEK"
+            statusLine = "\(secrets.count) secret\(secrets.count == 1 ? "" : "s") · \(protection)"
+            refreshing = false
+            if refreshRequested {
+                refreshRequested = false
+                refresh()
+            }
         }
-        let identity = Identity.load()
-        identityEmail = identity.email ?? ""
-        identityUsername = identity.username ?? ""
-        kekConfig = KEKConfig.load()
-        auditEvents = (try? AuditLog.shared.recent(limit: 40))?.reversed() ?? []
-        let protection = kekConfig.source == .passkey ? "passkey-protected" : "Keychain KEK"
-        statusLine = secrets.isEmpty
-            ? "Vault empty · \(protection)"
-            : "\(secrets.count) secret\(secrets.count == 1 ? "" : "s") · \(protection)"
     }
 
     /// Saves a new secret. `value` must come from a secure field and is not retained.
     func addSecret(name: String, kind: SecretKind, hosts: [String], value: String,
-                   injection: CredentialInjection = .bearer) throws {
+                   injection: CredentialInjection = .bearer) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw VaultUIError.message("Name is required.") }
         let cleanHosts = hosts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -59,16 +74,22 @@ final class VaultUIModel: ObservableObject {
             throw VaultUIError.message("At least one host is required — empty allowlist denies every host.")
         }
         guard !value.isEmpty else { throw VaultUIError.message("Secret value is required.") }
-        try vault.save(name: trimmed, kind: kind, value: Data(value.utf8),
-                       policy: SecretPolicy(allowedHosts: cleanHosts, injection: injection))
-        AuditLog.shared.record(client: "agentcredsd-ui", action: "save", secretName: trimmed, decision: "ui")
+        try injection.validate()
+        let vault = vault
+        _ = try await Task.detached {
+            try vault.save(name: trimmed, kind: kind, value: Data(value.utf8),
+                           policy: SecretPolicy(allowedHosts: cleanHosts, injection: injection),
+                           replacingExisting: false)
+        }.value
+        audit.record(client: "agentcredsd-ui", action: "save", secretName: trimmed, decision: "ui")
         banner = "Saved “\(trimmed)” for \(cleanHosts.joined(separator: ", "))."
         refresh()
     }
 
-    func deleteSecret(named name: String) throws {
-        try vault.delete(name: name)
-        AuditLog.shared.record(client: "agentcredsd-ui", action: "delete", secretName: name, decision: "ui")
+    func deleteSecret(named name: String) async throws {
+        let vault = vault
+        try await Task.detached { try vault.delete(name: name) }.value
+        audit.record(client: "agentcredsd-ui", action: "delete", secretName: name, decision: "ui")
         banner = "Deleted “\(name)”."
         refresh()
     }
@@ -83,6 +104,9 @@ final class VaultUIModel: ObservableObject {
     }
 
     func enrollPasskey() async {
+        guard !enrolling else { return }
+        enrolling = true
+        defer { enrolling = false }
         let ceremony = passkeyCeremony
         let result = await Task.detached(priority: .userInitiated) {
             AppDelegate.runPasskeyEnrollment(ceremony: ceremony)
@@ -90,7 +114,7 @@ final class VaultUIModel: ObservableObject {
         await MainActor.run {
             switch result {
             case .success(let outcome):
-                banner = "Vault protected by passkey (\(outcome.secretsRewrapped) secret(s) re-wrapped). Restart agent-creds to use it."
+                banner = "Vault protected by passkey (\(outcome.secretsRewrapped) secret(s) re-wrapped). Passkey protection is active now."
             case .failure(let error):
                 banner = "Passkey enrollment failed: \(error)"
             }

@@ -1,10 +1,15 @@
 import AppKit
 import AgentCredsCore
+import CompanionProtocol
+import CoreImage
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var server: SocketServer?
     private var proxy: ProxyServer?
+    private var companion: CompanionServer?
+    private var pairingInProgress = false
+    private var approvals: CompanionApprovals?
     let passkeyCeremony = PasskeyCeremony()
 
     private var vault: VaultStore?
@@ -40,8 +45,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         do {
             let kekProvider = try KEKResolver.provider(ceremony: passkeyCeremony)
             let vault = try VaultStore(kekProvider: kekProvider)
-            let server = try SocketServer(vault: vault,
-                                          kekPromptsItself: kekProvider.promptsEveryTime)
+            let approvals = CompanionApprovals(vault: vault)
+            self.approvals = approvals
+            let companion = CompanionServer(vault: vault, approvals: approvals)
+            self.companion = companion
+            Task.detached {
+                do {
+                    if try CompanionStateStorage.keychain.load() != nil {
+                        try companion.enableRelay(url: RelayAddress.productionURL, storage: .keychain)
+                    }
+                } catch { NSLog("agent-creds: relay unavailable; use Pair iPhone to retry") }
+            }
+            let server = try SocketServer(vault: vault, approvals: approvals)
             server.start()
             self.server = server
             let proxy = try ProxyServer(vault: vault)
@@ -67,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu(placeholder: false)
     }
 
+    @MainActor
     private func rebuildMenu(placeholder: Bool) {
         menu.removeAllItems()
 
@@ -157,6 +173,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         protectItem.isEnabled = KEKConfig.load().source != .passkey
         menu.addItem(protectItem)
 
+        let pairItem = NSMenuItem(title: "Pair iPhone…", action: #selector(pairCompanion), keyEquivalent: "")
+        pairItem.target = self
+        menu.addItem(pairItem)
+        let revokeItem = NSMenuItem(title: "Disconnect All Companions", action: #selector(revokeCompanions), keyEquivalent: "")
+        revokeItem.target = self
+        menu.addItem(revokeItem)
+
         let doctorItem = NSMenuItem(title: "Run Doctor…", action: #selector(runDoctor), keyEquivalent: "d")
         doctorItem.target = self
         menu.addItem(doctorItem)
@@ -201,13 +224,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 switch result {
                 case .success(let outcome):
                     alert.messageText = "Vault protected by passkey"
-                    alert.informativeText = "Re-wrapped \(outcome.secretsRewrapped) secret(s) under a key that only exists during a passkey approval. Restart agent-creds to use it."
+                    alert.informativeText = "Re-wrapped \(outcome.secretsRewrapped) secret(s) under a key that only exists during a passkey approval. Passkey protection is active now."
                 case .failure(let error):
                     alert.alertStyle = .warning
                     alert.messageText = "Could not protect the vault"
                     alert.informativeText = "\(error)"
                 }
                 alert.runModal()
+            }
+        }
+    }
+
+    @objc private func pairCompanion() {
+        guard !pairingInProgress, let companion else { return }
+        pairingInProgress = true
+        Task { @MainActor in
+        defer { pairingInProgress = false }
+        do {
+            let invite = try await Task.detached {
+                try companion.enableRelay(url: RelayAddress.productionURL, storage: .keychain)
+                return try companion.invite()
+            }.value
+            let alert = NSAlert()
+            alert.messageText = "Pair your iPhone"
+            alert.informativeText = "In agent-creds on your iPhone, tap Scan Mac Code. Both devices need internet access. This code expires in 10 minutes and can enroll one iPhone. Confirm trust on your Mac after scanning. Trusted pairing survives restarts; revoke it anytime from this menu."
+            let filter = CIFilter(name: "CIQRCodeGenerator")!
+            filter.setValue(Data(invite.qrString.utf8), forKey: "inputMessage")
+            filter.setValue("M", forKey: "inputCorrectionLevel")
+            if let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 6, y: 6)) {
+                let image = NSImage(size: output.extent.size)
+                image.addRepresentation(NSCIImageRep(ciImage: output))
+                let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
+                view.image = image; view.imageScaling = .scaleProportionallyUpOrDown
+                alert.accessoryView = view
+            }
+            alert.addButton(withTitle: "Done")
+            alert.addButton(withTitle: "Copy Pairing Code")
+            NSApp.activate(ignoringOtherApps: true)
+            if alert.runModal() == .alertSecondButtonReturn {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(invite.qrString, forType: .string)
+            }
+        } catch {
+            let alert = NSAlert(); alert.messageText = "Could not pair"; alert.informativeText = error.localizedDescription; alert.runModal()
+        }
+    }
+
+    }
+    @objc private func revokeCompanions() {
+        guard let companion else { return }
+        Task { @MainActor in
+            let persisted = await Task.detached { companion.revokeAll() }.value
+            if !persisted {
+                let alert = NSAlert(); alert.messageText = "Could not save revocation"
+                alert.informativeText = "Access was stopped for this session, but Keychain could not save the change. Retry revocation before restarting the Mac app."
+                alert.runModal()
+            }
+        }
+    }
+    func applicationWillTerminate(_ notification: Notification) { companion?.stopRelay() }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { openApproval(url) }
+    }
+
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void) -> Bool {
+        guard let url = userActivity.webpageURL, ApprovalLink.requestID(from: url) != nil else { return false }
+        openApproval(url); return true
+    }
+
+    private func openApproval(_ url: URL) {
+        guard let id = ApprovalLink.requestID(from: url), let approvals,
+              let request = approvals.list().first(where: { $0.id == id }), request.effectiveStatus() == .pending else {
+            let alert = NSAlert(); alert.messageText = "Request unavailable"; alert.informativeText = "This request expired, was already decided, or belongs to another Mac session."; alert.runModal(); return
+        }
+        Thread.detachNewThread {
+            let outcome = ApprovalDialog.present(CredentialApproval(client: request.agent, credentialName: request.credentialName, hosts: request.hosts, purpose: request.purpose))
+            switch outcome {
+            case .approved(let duration): try? approvals.decide(id: id, approved: true, duration: min(duration, request.maximumDuration))
+            case .denied: try? approvals.decide(id: id, approved: false, duration: 1)
             }
         }
     }
@@ -238,8 +334,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             process.standardError = pipe
             do {
                 try process.run()
-                process.waitUntilExit()
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
                 let output = String(data: data, encoding: .utf8) ?? "(no output)"
                 DispatchQueue.main.async {
                     let alert = NSAlert()

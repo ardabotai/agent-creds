@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — iOS companion
+
+- Add a native iPhone/iPad app with vault management, linked approval requests, activity, QR pairing, Face ID/passcode confirmation, and an isolated synthetic demo.
+- Add opt-in encrypted local-network transport with expiring pairing keys, per-connection challenges, and revocation.
+- Return approval links from the credential flow; bind one-time handle redemption to a separate private capability.
+- Keep the Mac unlock ceremony mandatory, invalidate pending approvals on credential changes, and register native deep-link handlers on both platforms.
+
+## Unreleased — Mac app safety fixes
+
+- Keep passkey prompts and vault I/O off the main thread; serialize ceremonies.
+- Commit passkey configuration and wrapped keys atomically, with file locking and durable writes.
+- Resolve the live key provider without restart; reject CLI secret operations in passkey mode before Keychain access.
+- Reject duplicate names in Add Secret and support Bearer, Basic, and custom-header authentication.
+- Disable agent-directed CDP browser fill because loopback does not authenticate browser ownership.
+- Preserve legacy vault reads; new document writes require this app version or newer.
+
 ## Unreleased
 
 ### Added — Mac app UI (v1)
@@ -83,3 +99,9 @@ ever seeing them. Maintained by ArdaBot, Inc.
 - Envelope encryption; vault, audit log, and KEK files created 0600 inside a
   0700 directory before any bytes are written
 - Append-only audit log of every approval, denial, and release
+
+- Added iOS approval notification permission/settings, authenticated tap routing, and a Mac APNs sender with private payloads, expiring alerts, retries, and pairing-bound token registration. Live APNs provisioning remains required.
+
+- Added QR-based trusted iPhone ownership: Secure Enclave key capsules and fresh-challenge signatures authorize independent approval, add, replacement, policy editing and deletion without a second Mac ceremony after owner enrollment.
+
+- Deployed a Cloudflare relay with authenticated outbound WebSockets, opaque channel routing, expiry/replay limits, and APNs provider support. Added persistent Mac trust, single-use QR enrollment credential rotation, and relay-aware iOS transport. Live synthetic relay tests pass; Apple push signing and physical-device validation remain pending.

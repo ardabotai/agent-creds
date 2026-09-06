@@ -59,12 +59,18 @@ public struct KEKConfig: Codable {
         IPCPaths.directory.appendingPathComponent("kek.json")
     }
 
+    /// Security-sensitive callers must use this throwing reader. Malformed or
+    /// unreadable configuration must never create a replacement Keychain key.
+    public static func read(vaultURL: URL = IPCPaths.vaultURL) throws -> KEKConfig {
+        if let embedded = try VaultDocument.read(at: vaultURL).kekConfig { return embedded }
+        let legacyURL = vaultURL.deletingLastPathComponent().appendingPathComponent("kek.json")
+        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return KEKConfig() }
+        return try JSONDecoder().decode(KEKConfig.self, from: Data(contentsOf: legacyURL))
+    }
+
     public static func load() -> KEKConfig {
-        guard let data = try? Data(contentsOf: fileURL),
-              let config = try? JSONDecoder().decode(KEKConfig.self, from: data) else {
-            return KEKConfig()
-        }
-        return config
+        // Display-only fallback is deliberately fail closed.
+        (try? read()) ?? KEKConfig(source: .passkey)
     }
 
     public func save() throws {

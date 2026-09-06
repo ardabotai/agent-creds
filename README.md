@@ -12,7 +12,6 @@ agent ──MCP──▶ agentcredsd ──Touch ID──▶ you
                     │
                     ├─▶ egress proxy   real credential attached at send time
                     ├─▶ env injection  child process only
-                    └─▶ browser fill   typed into the page over CDP
 ```
 
 ## Why it works this way
@@ -25,7 +24,7 @@ nothing more:
    daemon's own UI, so a hijacked agent cannot capture, replay, or fake it.
 2. **The agent never holds the value.** It gets an opaque `acred_*` handle; the
    daemon attaches the real credential at egress, injects it into a child
-   process, or types it into a page itself.
+   process.
 3. **Allowed hosts are mandatory, and empty means deny.** A secret carries the
    hosts it may be used against. There is deliberately no allow-all.
 4. **Everything is scrubbed and logged.** Injected values are redacted from
@@ -71,6 +70,18 @@ agentcreds doctor
 `./uninstall.sh` removes the binaries and login agent, leaving the vault intact.
 </details>
 
+## iPhone and iPad companion
+
+The native [companion app](ios/README.md) manages the Mac vault over a paired,
+end-to-end encrypted relay connection across networks and opens linked approval
+requests. The Mac stays online; no router port forwarding is needed. It includes
+a synthetic demo, QR pairing, Face ID/passcode confirmation, vault policy editing,
+and activity. The QR pairing flow can enroll the iPhone as an independent vault
+owner: confirm trust once on the Mac, then use Face ID or the phone passcode for
+approvals and vault changes without another Mac prompt. Trusted relay pairing
+survives restarts. See [iOS setup](ios/README.md), [relay deployment](relay/README.md),
+and the planned [paid hosted vault](docs/product-tiers.md).
+
 ## Works with
 
 `agentcreds setup` auto-detects and configures whichever of these you have:
@@ -96,7 +107,7 @@ instructions.
 | `request_secret` | Touch ID → returns a short-lived proxy handle |
 | `begin_signup` | Touch ID → signs the user up with a **generated** password |
 | `capture_secret` | Opens a secure paste window for a secret not yet in the vault |
-| `fill_browser_field` | Touch ID → daemon types the secret into a page over CDP |
+| Browser sign-in | Manual entry using the browser’s password manager; CDP fill is disabled |
 
 ## Agent surfaces
 
@@ -107,7 +118,7 @@ through the agent:
 |---|---|
 | HTTP APIs (any client, incl. `curl`) | egress proxy handle + placeholder DSL |
 | CLI tools (`gh`, `aws`, …) | `agentcreds run --with <secret> -- <cmd>` |
-| Browser automation (Playwright, agent-browser, any Chromium with `--remote-debugging-port`) | `fill_browser_field` over CDP |
+| Browser sign-in | User signs in manually; no agent-directed CDP secret release |
 | Signup anywhere | `begin_signup` + generated passwords |
 
 ## The egress proxy and the placeholder DSL
@@ -174,9 +185,20 @@ agentcreds passkey status
 
 The passkey's WebAuthn PRF output derives the key that unwraps your secrets, so
 the assertion *is* the key release. Without your approval the key does not exist
-in the process — an unapproved release is impossible rather than refused.
-Enrollment re-wraps every DEK before switching and only then drops the Keychain
-copy, so a failure leaves the vault exactly as it was.
+in the process. Enrolling a trusted iPhone explicitly adds a second unlock path:
+a phone-protected encrypted key capsule permits independently authenticated and
+signed phone operations. The Mac provider itself is not cached or downgraded.
+Enrollment commits the rewrapped DEKs and passkey configuration in one atomic
+vault document, then drops the Keychain copy. Protection becomes active immediately.
+Existing array-format vaults remain readable; after a write, older app versions
+cannot read the new document format. Do not downgrade after migration.
+
+In passkey mode, CLI `add` and `run` fail before accessing the Keychain. Use the
+Mac app to add credentials and MCP to request scoped HTTP handles. Metadata
+commands (`ls`, `doctor`, `rm`) remain available.
+
+CDP browser fill is disabled: a loopback endpoint does not establish trusted
+browser ownership. Use the browser’s own password manager manually.
 
 **Requires the signed build.** Passkeys need the `associated-domains`
 entitlement, which cannot be attached to a bare executable, so a Homebrew
@@ -200,7 +222,7 @@ written.
 - `Sources/AgentCredsCore` — models, envelope crypto, vault, minters, host
   policy, placeholder DSL, audit log, approval ceremony
 - `Sources/agentcredsd` — menubar daemon: MCP server, egress proxy, capture
-  window, browser filler
+  window, vault management
 - `Sources/agentcreds` — CLI and MCP stdio shim
 
 ## Known limitations (v1)

@@ -36,12 +36,33 @@ final class PasskeyKEKProvider: KEKProviding {
 /// Chooses the KEK source the vault was configured for.
 enum KEKResolver {
     static func provider(ceremony: PasskeyCeremony) throws -> KEKProviding {
-        let config = KEKConfig.load()
+        LiveKEKProvider(ceremony: ceremony)
+    }
+}
+
+struct LiveKEKProvider: KEKProviding {
+    let ceremony: PasskeyCeremony
+    let vaultURL: URL
+    let keychainLoader: () throws -> SymmetricKey
+    let passkeyLoader: (KEKConfig, String) throws -> SymmetricKey
+
+    init(ceremony: PasskeyCeremony, vaultURL: URL = IPCPaths.vaultURL,
+         keychainLoader: @escaping () throws -> SymmetricKey = { try KeychainKEKProvider().loadOrCreate() },
+         passkeyLoader: ((KEKConfig, String) throws -> SymmetricKey)? = nil) {
+        self.ceremony = ceremony
+        self.vaultURL = vaultURL
+        self.keychainLoader = keychainLoader
+        self.passkeyLoader = passkeyLoader ?? { config, reason in
+            try PasskeyKEKProvider(config: config, ceremony: ceremony).kek(reason: reason)
+        }
+    }
+
+    var promptsEveryTime: Bool { (try? KEKConfig.read(vaultURL: vaultURL).source) != .keychain }
+    func kek(reason: String) throws -> SymmetricKey {
+        let config = try KEKConfig.read(vaultURL: vaultURL)
         switch config.source {
-        case .keychain:
-            return StaticKEKProvider(try KeychainKEKProvider().loadOrCreate())
-        case .passkey:
-            return PasskeyKEKProvider(config: config, ceremony: ceremony)
+        case .keychain: return try keychainLoader()
+        case .passkey: return try passkeyLoader(config, reason)
         }
     }
 }
@@ -56,7 +77,7 @@ enum PasskeyEnrollment {
 
     static func enroll(relyingParty: String, userName: String,
                        ceremony: PasskeyCeremony) throws -> Result {
-        let existing = KEKConfig.load()
+        let existing = try KEKConfig.read()
         guard existing.source == .keychain else {
             throw PasskeyError.failed("the vault is already protected by a passkey")
         }
@@ -70,17 +91,11 @@ enum PasskeyEnrollment {
                                          credentialID: credentialID, salt: salt)
         let newKEK = PasskeyKEK.deriveKEK(prfOutput: prf, relyingParty: relyingParty)
 
-        // Re-wrap under the OLD provider before switching config, so a failure
-        // here leaves the vault readable exactly as it was.
-        let oldProvider = StaticKEKProvider(try KeychainKEKProvider().loadOrCreate())
-        let vault = try VaultStore(kekProvider: oldProvider)
-        let count = try vault.list().count
-        try vault.rewrapDEKs(to: newKEK, reason: "Move your vault to passkey protection")
-
-        var config = KEKConfig(source: .passkey, relyingParty: relyingParty,
+        let vault = try VaultStore(kekProvider: CLIKEKProvider())
+        let config = KEKConfig(source: .passkey, relyingParty: relyingParty,
                                credentialID: credentialID, salt: salt,
                                kekCheck: PasskeyKEK.check(for: newKEK))
-        try config.save()
+        let count = try vault.migrateToPasskey(key: newKEK, config: config)
 
         // Only now is the Keychain copy redundant. Removing it is what makes
         // the guarantee real: without an assertion there is no key anywhere.

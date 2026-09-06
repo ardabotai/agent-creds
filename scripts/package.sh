@@ -66,6 +66,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST_EOF
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <!-- Menubar agent: no Dock icon, no main window. -->
     <key>LSUIElement</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Connect to your paired iPhone to manage credentials and approve requests.</string>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>ai.ardabot.agentcreds.approvals</string>
+        <key>CFBundleURLSchemes</key><array><string>agentcreds</string></array>
+    </dict></array>
 </dict>
 </plist>
 PLIST_EOF
