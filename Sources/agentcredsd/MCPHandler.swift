@@ -7,15 +7,16 @@ import AgentCredsCore
 /// expect a raw value back.
 final class MCPHandler {
     private let vault: VaultStore
+    private let approvals: CompanionApprovals?
     private let audit = AuditLog.shared
     private let capture = CaptureController()
     /// True in passkey mode, where unwrapping raises its own system sheet — so
     /// we must not also run a separate Touch ID prompt for the same release.
-    private let kekPromptsItself: Bool
+    private var kekPromptsItself: Bool { vault.promptsEveryTime }
 
-    init(vault: VaultStore, kekPromptsItself: Bool = false) {
+    init(vault: VaultStore, approvals: CompanionApprovals? = nil) {
+        self.approvals = approvals
         self.vault = vault
-        self.kekPromptsItself = kekPromptsItself
     }
 
     func handle(message: Data, client: String) -> Data? {
@@ -48,6 +49,10 @@ final class MCPHandler {
 
     private var toolDefinitions: [[String: Any]] {
         [
+            ["name": "request_approval", "description": "Request a stored credential without blocking. Returns approval_url and app_url for the user to open on Mac or paired iPhone. Keep redemption_token private and poll approval_status. Never include the redemption token in a user link.",
+             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"], "purpose": ["type": "string"]], "required": ["name", "purpose"]]],
+            ["name": "approval_status", "description": "Poll a linked credential request using request_id and its private redemption_token. An approved credential can be redeemed once. Returns status until the user approves and unlocks the Mac.",
+             "inputSchema": ["type": "object", "properties": ["request_id": ["type": "string"], "redemption_token": ["type": "string"]], "required": ["request_id", "redemption_token"]]],
             [
                 "name": "list_secrets",
                 "description": "List the names and kinds of stored secrets. Metadata only — values are never returned.",
@@ -75,7 +80,7 @@ final class MCPHandler {
             ],
             [
                 "name": "use_credential",
-                "description": "THE credential tool — use this whenever a task needs a password, API key, token, or login. Pass the site or service you are working with (\"github.com\", \"api.stripe.com\") or a known vault name. The vault figures out the rest: if it already holds a matching credential the user is asked to approve this use and pick a duration; if it does not, the user is asked to provide it in a secure window. Either way you get back the same short-lived handle and never the value. NEVER ask the user for a secret in chat — call this instead.",
+                "description": "THE credential tool — use this whenever a task needs a password, API key, token, or login. For an existing credential, returns a pending request and app_url: show that link to the user, keep redemption_token private, and poll approval_status until the user approves on Mac or paired iPhone and unlocks the Mac. Pass the site or service you are working with (\"github.com\", \"api.stripe.com\") or a known vault name. The vault figures out the rest: if it already holds a matching credential the user is asked to approve this use and pick a duration; if it does not, the user is asked to provide it in a secure window. Existing credentials use linked approval; newly captured credentials return a scoped handle. You never receive the value. NEVER ask the user for a secret in chat — call this instead.",
                 "inputSchema": [
                     "type": "object",
                     "properties": [
@@ -131,21 +136,7 @@ final class MCPHandler {
                     "required": ["name", "purpose", "allowed_hosts"],
                 ],
             ],
-            [
-                "name": "fill_browser_field",
-                "description": "Type a stored secret directly into a field of a browser you are automating — the daemon connects over the Chrome DevTools Protocol and sets the value browser-side, so it never enters your context. Works with Playwright, agent-browser, or any Chromium launched with --remote-debugging-port=9222. Steps: navigate to the login page, make sure the field exists, call this with its CSS selector, then submit the form yourself. Blocks for Touch ID approval showing the page's real URL (read from the browser, not from you). The page's host must be within the secret's allowed hosts.",
-                "inputSchema": [
-                    "type": "object",
-                    "properties": [
-                        "name": ["type": "string", "description": "Vault name of the secret to fill"],
-                        "selector": ["type": "string", "description": "CSS selector of the target field, e.g. input[type=password]"],
-                        "purpose": ["type": "string", "description": "Why — shown verbatim to the user"],
-                        "cdp_url": ["type": "string", "description": "CDP endpoint (default http://127.0.0.1:9222)"],
-                        "page_url_contains": ["type": "string", "description": "Substring to pick the right page when several are open"],
-                    ],
-                    "required": ["name", "selector", "purpose"],
-                ],
-            ],
+
         ]
     }
 
@@ -158,6 +149,14 @@ final class MCPHandler {
 
         do {
             switch tool {
+            case "request_approval":
+                guard let approvals, let name = args["name"] as? String, let purpose = args["purpose"] as? String,
+                      let record = try vault.record(named: name) else { return reply(id: id, errorMessage: "Credential not found or linked approvals unavailable") }
+                return toolReply(id: id, text: try approvals.create(record: record, agent: client, purpose: purpose))
+            case "approval_status":
+                guard let approvals, let value = args["request_id"] as? String, let requestID = UUID(uuidString: value),
+                      let token = args["redemption_token"] as? String else { return reply(id: id, errorMessage: "Invalid approval request") }
+                return toolReply(id: id, text: try approvals.poll(id: requestID, token: token))
             case "list_secrets":
                 let meta = try vault.list().map { ["name": $0.name, "kind": $0.kind.rawValue] }
                 let text = String(data: try JSONSerialization.data(withJSONObject: meta), encoding: .utf8) ?? "[]"
@@ -193,6 +192,9 @@ final class MCPHandler {
                 }
 
                 if let record = matches.first {
+                    if let approvals {
+                        return toolReply(id: id, text: try approvals.create(record: record, agent: client, purpose: purpose))
+                    }
                     // Known credential: ask permission, and let the user scope
                     // how long rather than assuming the policy default.
                     let approval = ApprovalDialog.present(CredentialApproval(
@@ -305,59 +307,7 @@ final class MCPHandler {
                 return toolReply(id: id, text: try mintedCredentialText(record: record, client: client, purpose: purpose))
 
             case "fill_browser_field":
-                guard let name = args["name"] as? String, let selector = args["selector"] as? String else {
-                    return reply(id: id, errorMessage: "name and selector are required")
-                }
-                let purpose = args["purpose"] as? String ?? "(no purpose given)"
-                let cdpBase = args["cdp_url"] as? String ?? "http://127.0.0.1:9222"
-                // Resolve the host rather than prefix-matching: "http://127.0.0.1.evil.com"
-                // starts with the loopback literal but is an attacker's server.
-                guard HostPolicy.isLoopbackEndpoint(cdpBase) else {
-                    return toolReply(id: id, text: "cdp_url must be a loopback endpoint (127.0.0.1, localhost, or ::1).")
-                }
-                guard let record = try vault.record(named: name) else {
-                    return toolReply(id: id, text: "No secret named “\(name)”. Use capture_secret to have the user provide it securely.")
-                }
-                let pages: [CDPPage]
-                do {
-                    pages = try BrowserFiller.pages(cdpBase: cdpBase)
-                } catch {
-                    return toolReply(id: id, text: "\(error)")
-                }
-                let filter = args["page_url_contains"] as? String
-                let allowedHosts = record.policy.allowedHosts
-                guard !allowedHosts.isEmpty else {
-                    return toolReply(id: id, text: "“\(name)” has no allowed hosts, so it cannot be filled into any page. Re-save it with the host(s) it belongs to.")
-                }
-                let candidate = pages.first { page in
-                    guard let host = URL(string: page.url)?.host else { return false }
-                    if let filter, !page.url.contains(filter) { return false }
-                    return HostPolicy.matches(host: host, allowedHosts: allowedHosts)
-                }
-                guard let candidate else {
-                    return toolReply(id: id, text: "No open browser page matching allowed hosts \(allowedHosts.joined(separator: ", ")). Open pages: \(pages.map(\.url).joined(separator: ", ")). Navigate to the login page first.")
-                }
-                let reason = "\(client) wants to fill “\(name)” into ‘\(selector)’ on \(candidate.url) — purpose: \(purpose)"
-                guard approve(reason: reason, client: client, action: "fill_browser_field", secretName: name) else {
-                    return toolReply(id: id, text: "The user denied the fill.")
-                }
-                // Re-read the page after approval: a CDP target id survives
-                // navigation, so the page the user approved could have moved to
-                // another origin while the Touch ID prompt was up.
-                let live = (try? BrowserFiller.pages(cdpBase: cdpBase))?
-                    .first { $0.webSocketDebuggerUrl == candidate.webSocketDebuggerUrl }
-                guard let live, live.url == candidate.url,
-                      let liveHost = URL(string: live.url)?.host,
-                      HostPolicy.matches(host: liveHost, allowedHosts: allowedHosts) else {
-                    return toolReply(id: id, text: "Aborted: the page changed after you approved (was \(candidate.url), now \(live?.url ?? "gone")). Nothing was filled.")
-                }
-                let secretValue = String(data: try vault.revealValue(of: record), encoding: .utf8) ?? ""
-                do {
-                    try BrowserFiller.fill(value: secretValue, selector: selector, page: live)
-                } catch {
-                    return toolReply(id: id, text: "\(error)")
-                }
-                return toolReply(id: id, text: "Filled “\(name)” into ‘\(selector)’ on \(candidate.url). Submit the form to continue — never read the field's value back.")
+                return reply(id: id, errorMessage: "Browser fill is disabled: agent-supplied CDP endpoints cannot establish trusted browser ownership. Use the browser’s own password manager manually, or use a scoped credential handle for HTTP APIs.")
 
             default:
                 return reply(id: id, errorMessage: "unknown tool: \(tool)")

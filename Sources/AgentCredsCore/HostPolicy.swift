@@ -46,9 +46,16 @@ public enum SecureFile {
             // Non-atomic on purpose: writing into the file we just created 0600
             // keeps those permissions, where .atomic would swap in a fresh one.
             try data.write(to: temporary)
+            let handle = try FileHandle(forWritingTo: temporary)
+            defer { try? handle.close() }
+            try handle.synchronize()
             guard rename(temporary.path, url.path) == 0 else {
                 throw VaultError.io("could not replace \(url.path) (errno \(errno))")
             }
+            let directoryFD = open(directory.path, O_RDONLY)
+            guard directoryFD >= 0 else { throw VaultError.io("could not open directory for sync") }
+            defer { close(directoryFD) }
+            guard fsync(directoryFD) == 0 else { throw VaultError.io("could not sync directory") }
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             throw error

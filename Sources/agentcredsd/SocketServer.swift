@@ -6,17 +6,16 @@ import AgentCredsCore
 /// ClientHello line, then newline-delimited MCP JSON-RPC.
 final class SocketServer {
     private let vault: VaultStore
+    private let approvals: CompanionApprovals
     private let listenFD: Int32
     private let acceptQueue = DispatchQueue(label: "agentcreds.accept")
     private var acceptSource: DispatchSourceRead?
     private var connections: [ObjectIdentifier: Connection] = [:]
     private let lock = NSLock()
 
-    private let kekPromptsItself: Bool
-
-    init(vault: VaultStore, kekPromptsItself: Bool = false) throws {
+    init(vault: VaultStore, approvals: CompanionApprovals) throws {
+        self.approvals = approvals
         self.vault = vault
-        self.kekPromptsItself = kekPromptsItself
         self.listenFD = try UnixSocket.listen(at: IPCPaths.socketPath)
     }
 
@@ -31,8 +30,7 @@ final class SocketServer {
         let fd = accept(listenFD, nil, nil)
         guard fd >= 0 else { return }
         let connection = Connection(fd: fd,
-                                    handler: MCPHandler(vault: vault,
-                                                        kekPromptsItself: kekPromptsItself))
+                                    handler: MCPHandler(vault: vault, approvals: approvals))
         lock.lock()
         connections[ObjectIdentifier(connection)] = connection
         lock.unlock()

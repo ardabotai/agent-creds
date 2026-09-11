@@ -210,6 +210,7 @@ do {
         } else {
             injection = .bearer
         }
+        guard try KEKConfig.read().source == .keychain else { throw VaultError.passkeyRequiresDaemon }
         guard let raw = getpass("Value for “\(name)” (input hidden): ") else { exit(1) }
         let value = String(cString: raw)
         guard !value.isEmpty else {
@@ -283,7 +284,7 @@ do {
                object["ok"] as? Bool == true {
                 print("  ✓ Vault re-wrapped under a passkey-derived key (\(object["secretsRewrapped"] as? Int ?? 0) secret(s)).")
                 print("  ✓ The Keychain copy of the key has been removed.")
-                print("  Restart the daemon to pick it up: brew services restart agent-creds")
+                print("  Passkey protection is active now. Use the Mac app or MCP for secret operations.")
             } else {
                 let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
                 print("  Enrollment failed: \(object?["error"] as? String ?? "no response from daemon")")
@@ -400,6 +401,7 @@ do {
         }
 
     case "run":
+        guard try KEKConfig.read().source == .keychain else { throw VaultError.passkeyRequiresDaemon }
         guard let dashIndex = rest.firstIndex(of: "--"), dashIndex + 1 < rest.count else {
             print("Usage: agentcreds run --with <name>[:ENV_VAR] [--with …] -- <cmd> [args…]")
             exit(64)
@@ -458,6 +460,6 @@ do {
         usage()
     }
 } catch {
-    FileHandle.standardError.write(Data("agentcreds: \(error)\n".utf8))
+    FileHandle.standardError.write(Data("agentcreds: \(error.localizedDescription)\n".utf8))
     exit(1)
 }

@@ -16,3 +16,14 @@ kek.devonly
 
 # Release artifacts
 dist/
+
+# Companion project is generated reproducibly and checked in.
+!ios/AgentCreds.xcodeproj/
+!ios/AgentCreds.xcodeproj/**
+ios/AgentCreds.xcodeproj/xcuserdata/
+
+# Relay development and private provider configuration
+node_modules/
+relay/.wrangler/
+.dev.vars*
+.env*

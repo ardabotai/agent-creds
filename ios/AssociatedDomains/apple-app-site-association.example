@@ -1,0 +1,9 @@
+{
+  "applinks": {
+    "details": [{
+      "appIDs": ["YOUR_TEAM_ID.ai.ardabot.agentcreds", "YOUR_TEAM_ID.ai.ardabot.agentcreds.companion"],
+      "components": [{"/": "/approve/*", "comment": "Open a pending credential request. Opening never approves."}]
+    }]
+  },
+  "webcredentials": {"apps": ["YOUR_TEAM_ID.ai.ardabot.agentcreds"]}
+}

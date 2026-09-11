@@ -26,6 +26,23 @@ public enum CredentialInjection: Codable, Equatable {
     /// Authorization: Basic base64(<username>:<secret>)
     case basic(username: String)
 
+    public func validate() throws {
+        switch self {
+        case .bearer: break
+        case .basic(let username):
+            guard !username.isEmpty, !username.contains(":"),
+                  !username.contains(where: { $0.isNewline }) else {
+                throw VaultError.io("Basic authentication requires a username without colons or newlines.")
+            }
+        case .header(let name, let prefix):
+            let token = CharacterSet(charactersIn: "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            guard !name.isEmpty, name.unicodeScalars.allSatisfy({ token.contains($0) }),
+                  !prefix.contains(where: { $0.isNewline }) else {
+                throw VaultError.io("Enter a valid HTTP header name and a prefix without newlines.")
+            }
+        }
+    }
+
     /// The header this injection writes, and the value to write into it.
     public func headerField(secret: String) -> (name: String, value: String) {
         switch self {
@@ -92,15 +109,19 @@ public struct SecretRecord: Codable, Identifiable {
     }
 }
 
-public struct SecretMetadata: Codable {
+public struct SecretMetadata: Codable, Identifiable {
+    public var id: String { name }
     public let name: String
     public let kind: SecretKind
     public let createdAt: Date
+    /// Host allowlist only — never the secret value. Empty means deny-all.
+    public let allowedHosts: [String]
 
-    public init(name: String, kind: SecretKind, createdAt: Date) {
+    public init(name: String, kind: SecretKind, createdAt: Date, allowedHosts: [String] = []) {
         self.name = name
         self.kind = kind
         self.createdAt = createdAt
+        self.allowedHosts = allowedHosts
     }
 }
 

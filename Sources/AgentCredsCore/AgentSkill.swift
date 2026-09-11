@@ -82,12 +82,23 @@ The user approves with Touch ID, then the secret is injected into that command's
 environment only (`github/token` becomes `$GITHUB_TOKEN`; override with
 `--with github/token:GH_TOKEN`). You never hold the value.
 
-### Browsers — let the daemon type it
+### Approval links — let the user choose Mac or iPhone
 
-When automating a browser (Playwright, agent-browser, any Chromium started with
-`--remote-debugging-port=9222`): navigate to the login page yourself, then call
-`fill_browser_field(name, selector, purpose)`. The daemon connects over CDP and
-fills the field. Submit the form afterward. Never read the field's value back.
+For an existing credential, call `request_approval(name, purpose)`. Present the
+returned `app_url` as “Review credential request” so the installed Mac or paired
+iPhone companion opens its approval sheet. The HTTPS `approval_url` is reserved
+for deployments with the Universal Links association configured. Never include
+`redemption_token` in the displayed link or user-facing text. Keep it within the
+tool workflow and call `approval_status(request_id, redemption_token)` to poll.
+An approved handle can be redeemed once. The phone records a decision; a Mac
+unlock is still required before release. Expired or restarted sessions require a
+new request. Agent names are self-reported; the private token binds redemption.
+
+### Browsers — manual password-manager entry
+
+CDP browser fill is disabled because an agent-supplied endpoint cannot prove
+browser ownership. Ask the user to sign in using their browser password manager.
+Never request or read a password in chat or through browser automation.
 
 ### Creating an account — let the vault pick the password
 
